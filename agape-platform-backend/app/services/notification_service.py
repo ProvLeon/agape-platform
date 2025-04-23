@@ -1,6 +1,7 @@
 from app import mongo
 from bson import ObjectId
 from datetime import datetime, timezone
+from app.services.socket_service import socketio
 
 # In a real implementation, this would connect to FCM, APNS, etc.
 # For now, we'll simulate notification storage in the database
@@ -54,6 +55,8 @@ def send_meeting_notification(meeting_id, event_type, new_status=None):
         body = f"Meeting has ended: {meeting['title']}"
     elif event_type == 'status_changed' and new_status:
         body = f"Meeting status updated to {new_status}: {meeting['title']}"
+    elif event_type == 'reminder':
+        body = f"Meeting starts soon: {meeting['title']} at {meeting['scheduled_start'].strftime('%I:%M %p')}"
 
     # Create notifications in DB
     notifications = []
@@ -70,7 +73,32 @@ def send_meeting_notification(meeting_id, event_type, new_status=None):
         notifications.append(notification)
 
     if notifications:
-        mongo.db.notifications.insert_many(notifications)
+        result = mongo.db.notifications.insert_many(notifications)
+
+        # Send real-time notifications via WebSocket
+        notification_data = {
+            'title': title,
+            'body': body,
+            'meeting_id': str(meeting['_id']),
+            'event_type': event_type,
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        }
+
+        # Send to ministry or camp room
+        if not meeting.get('camp_id'):
+            socketio.emit('meeting_notification', notification_data, room='ministry')
+        else:
+            camp_id = str(meeting['camp_id'])
+            socketio.emit('meeting_notification', notification_data, room=f"camp_{camp_id}")
+
+        # Also send individual notifications
+        for recipient_id in recipients:
+            socketio.emit('notification', {
+                'type': 'meeting',
+                'title': title,
+                'body': body,
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }, room=f"user_{str(recipient_id)}")
 
     # In a real implementation, we'd trigger push notifications here
     return True
@@ -148,7 +176,32 @@ def send_prayer_request_notification(request_id, event_type):
         notifications.append(notification)
 
     if notifications:
-        mongo.db.notifications.insert_many(notifications)
+        result = mongo.db.notifications.insert_many(notifications)
+
+        # Send real-time notifications via WebSocket
+        notification_data = {
+            'title': title,
+            'body': body,
+            'prayer_request_id': str(prayer['_id']),
+            'event_type': event_type,
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        }
+
+        # Broadcast to appropriate room
+        if not prayer.get('camp_id'):
+            socketio.emit('prayer_notification', notification_data, room='ministry')
+        else:
+            camp_id = str(prayer['camp_id'])
+            socketio.emit('prayer_notification', notification_data, room=f"camp_{camp_id}")
+
+        # Also send individual notifications
+        for recipient in notifications:
+            socketio.emit('notification', {
+                'type': 'prayer_request',
+                'title': title,
+                'body': body,
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }, room=f"user_{str(recipient['user_id'])}")
 
     # In a real implementation, we'd trigger push notifications here
     return True
@@ -189,5 +242,11 @@ def mark_all_notifications_as_read(user_id):
         {'user_id': ObjectId(user_id), 'is_read': False},
         {'$set': {'is_read': True}}
     )
+
+    # Emit notification count update via WebSocket
+    socketio.emit('notifications_read', {
+        'user_id': user_id,
+        'count': 0
+    }, room=f"user_{user_id}")
 
     return result.modified_count

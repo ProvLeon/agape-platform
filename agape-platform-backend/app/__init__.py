@@ -10,7 +10,6 @@ import os
 mongo = PyMongo()
 jwt = JWTManager()
 
-# Add to the create_app function
 def create_app():
     app = Flask(__name__)
     app.config.from_object(app_config)
@@ -53,6 +52,10 @@ def create_app():
         mongo.db.notifications.create_index([('user_id', 1), ('is_read', 1)])
         mongo.db.notifications.create_index('created_at')
 
+        # Meeting messages indexes
+        mongo.db.meeting_messages.create_index('meeting_id')
+        mongo.db.meeting_messages.create_index('timestamp')
+
     # Register blueprints
     from app.routes.auth import auth_bp
     from app.routes.users import users_bp
@@ -67,6 +70,10 @@ def create_app():
     app.register_blueprint(messages_bp, url_prefix='/api/messages')
     app.register_blueprint(meetings_bp, url_prefix='/api/meetings')
     app.register_blueprint(prayer_requests_bp, url_prefix='/api/prayer-requests')
+
+    # Initialize SocketIO
+    from app.services.socket_service import configure_socket
+    socketio = configure_socket(app)
 
     # Error handlers
     @app.errorhandler(404)
