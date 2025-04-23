@@ -61,14 +61,18 @@ def create_app():
     from app.routes.users import users_bp
     from app.routes.camps import camps_bp
     from app.routes.messages import messages_bp
-    from app.routes.meetings import meetings_bp
+    from app.routes.meetings import meetings_bp as meetings_blueprint
     from app.routes.prayer_requests import prayer_requests_bp
+    from app.routes.meeting_messages import meeting_messages_bp as meeting_chat_blueprint
+    from app.routes.health import health_bp
 
+    app.register_blueprint(health_bp, url_prefix='/api')
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(users_bp, url_prefix='/api/users')
     app.register_blueprint(camps_bp, url_prefix='/api/camps')
     app.register_blueprint(messages_bp, url_prefix='/api/messages')
-    app.register_blueprint(meetings_bp, url_prefix='/api/meetings')
+    app.register_blueprint(meetings_blueprint, url_prefix='/api/meetings')
+    app.register_blueprint(meeting_chat_blueprint, url_prefix='/api/meetings/messages')
     app.register_blueprint(prayer_requests_bp, url_prefix='/api/prayer-requests')
 
     # Initialize SocketIO

@@ -75,7 +75,9 @@ def get_readable_time_diff(dt):
 
     return "just now"
 
-def serialize_objectid(obj):
+from typing import Dict, List, Union, Any
+
+def serialize_objectid(obj: Union[Dict, List, ObjectId, Any]) -> Union[Dict, List, str, Any]:
     """Convert ObjectId to string in nested dictionary or list"""
     if isinstance(obj, dict):
         return {k: serialize_objectid(v) for k, v in obj.items()}

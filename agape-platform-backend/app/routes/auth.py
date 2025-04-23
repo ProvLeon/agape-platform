@@ -132,3 +132,25 @@ def change_password():
     )
 
     return jsonify({'message': 'Password updated successfully'}), 200
+
+
+@auth_bp.route('/socket-token', methods=['POST'])
+@jwt_required()
+def get_socket_token():
+    """Get a specialized token for socket authentication"""
+    user_id = get_jwt_identity()
+    claims = get_jwt()
+
+    from app.utils.jwt_utils import create_socket_token
+
+    # Create a specialized token for socket connection
+    socket_token = create_socket_token(
+        user_id=user_id,
+        role=claims.get('role', 'member'),
+        camp_id=claims.get('camp_id')
+    )
+
+    return jsonify({
+        'socket_token': socket_token,
+        'expires_in': 7200  # 2 hours in seconds
+    }), 200

@@ -1,3 +1,4 @@
+from flask_socketio import rooms
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from bson.objectid import ObjectId
@@ -7,6 +8,7 @@ from app import mongo
 from app.services.notification_service import send_meeting_notification
 
 meetings_bp = Blueprint('meetings', __name__)
+"""Blueprint for managing meeting core functionality: creation, scheduling, attendance, etc."""
 
 @meetings_bp.route('/', methods=['POST'])
 @jwt_required()
@@ -477,8 +479,26 @@ def start_meeting(meeting_id):
     )
 
     if result.modified_count:
-        # Send notification
+        # Send notification via notification service
         send_meeting_notification(meeting_id, 'started')
+
+        # Also emit via WebSocket from socket service
+        from app.services.socket_service import socketio
+
+        # Format meeting data
+        meeting_data = {
+            'meeting_id': meeting_id,
+            'title': meeting['title'],
+            'status': 'in_progress',
+            'started_by': user_id,
+            'started_at': datetime.now(timezone.utc).isoformat()
+        }
+
+        # Emit to the appropriate room(s)
+        if meeting.get('camp_id'):
+            socketio.emit('meeting_started', meeting_data, room=f"camp_{str(meeting['camp_id'])}")
+        else:
+            socketio.emit('meeting_started', meeting_data, room="ministry")
 
         return jsonify({'message': 'Meeting started successfully'}), 200
     else:
@@ -520,8 +540,29 @@ def end_meeting(meeting_id):
     )
 
     if result.modified_count:
-        # Send notification
+        # Send notification via notification service
         send_meeting_notification(meeting_id, 'ended')
+
+        # Also emit via WebSocket from socket service
+        from app.services.socket_service import socketio
+
+        # Notify all participants in the meeting room
+        meeting_data = {
+            'meeting_id': meeting_id,
+            'title': meeting['title'],
+            'status': 'completed',
+            'ended_by': user_id,
+            'ended_at': datetime.now(timezone.utc).isoformat(),
+            'recording_url': recording_url
+        }
+
+        socketio.emit('meeting_ended', meeting_data, room=f"meeting_{meeting_id}")
+
+        # Also notify the camp or ministry
+        if meeting.get('camp_id'):
+            socketio.emit('meeting_ended', meeting_data, room=f"camp_{str(meeting['camp_id'])}")
+        else:
+            socketio.emit('meeting_ended', meeting_data, room="ministry")
 
         return jsonify({'message': 'Meeting ended successfully'}), 200
     else:
