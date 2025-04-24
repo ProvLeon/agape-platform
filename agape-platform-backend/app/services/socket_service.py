@@ -1,5 +1,6 @@
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_jwt_extended import decode_token
+from flask import request
 from app import mongo
 from bson import ObjectId
 import json
