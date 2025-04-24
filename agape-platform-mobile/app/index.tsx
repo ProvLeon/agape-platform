@@ -1,15 +1,21 @@
-import { Text, View } from "react-native";
+import React from 'react';
+import { Redirect } from 'expo-router';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function Index() {
-  return (
-    <View
-      style={{
-        flex: 1,
-        justifyContent: "center",
-        alignItems: "center",
-      }}
-    >
-      <Text>Edit app/index.tsx to edit this screen.</Text>
-    </View>
-  );
+  const { authState, isLoading } = useAuth();
+
+  // If still loading auth state, don't redirect yet - show nothing
+  if (isLoading) {
+    console.log('Loading auth state...');
+    return null;
+  }
+
+  // Use Redirect component instead of programmatic navigation
+  // This is safer for initial routing
+  if (authState.isAuthenticated) {
+    return <Redirect href="/(tabs)/home" />;
+  } else {
+    return <Redirect href="/(auth)/login" />;
+  }
 }
