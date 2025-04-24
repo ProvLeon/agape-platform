@@ -6,8 +6,6 @@ import { useAuth } from './AuthContext';
 interface SocketContextType {
   socket: Socket | null;
   isConnected: boolean;
-  // Add functions to emit events or subscribe if needed centrally
-  // Example: sendMessage: (event: string, data: any) => void;
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
@@ -18,68 +16,61 @@ if (!WS_URL) {
   console.error("WebSocket URL is not defined. Check environment variables.");
 }
 
-
 export const SocketProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
-  const { authState, fetchSocketToken } = useAuth(); // Get auth state and token fetcher
+  const { authState: { isAuthenticated, authToken }, fetchSocketToken } = useAuth();
 
   const connectSocket = useCallback(async () => {
-    if (!authState.isAuthenticated || !WS_URL) {
-      console.log('Socket connection skipped: Not authenticated or WS_URL missing.');
+    if (!isAuthenticated || !authToken || !WS_URL) {
+      console.log('Socket connection skipped: Auth state not ready or WS_URL missing.');
       return;
     }
 
-    // Fetch a short-lived token specifically for the socket connection
-    const socketAuthToken = await fetchSocketToken();
+    console.log('Attempting to fetch socket token using confirmed authToken...');
+    // **** CALL MODIFIED FUNCTION ****
+    const socketAuthToken = await fetchSocketToken(authToken); // Pass the confirmed token
 
     if (!socketAuthToken) {
-      console.error('Failed to get socket token, cannot connect WebSocket.');
+      console.error('Failed to get socket token via context, cannot connect WebSocket.');
       return;
     }
 
-    console.log('Attempting to connect WebSocket...');
+    console.log('Attempting to connect WebSocket with fetched socket token...');
     const newSocket = io(WS_URL, {
       transports: ['websocket'],
-      // Removed query token - prefer authenticate event
-      // query: { token: authState.authToken }, // Use the main JWT or a dedicated socket token
       reconnectionAttempts: 5,
       timeout: 10000,
+      // Removed query token - prefer authenticate event
     });
 
     newSocket.on('connect', () => {
       console.log('WebSocket connected:', newSocket.id);
       setIsConnected(true);
-      // Emit authentication event AFTER connection
       newSocket.emit('authenticate', { token: socketAuthToken });
     });
 
+    // ... (other event listeners remain the same)
     newSocket.on('disconnect', (reason) => {
       console.log('WebSocket disconnected:', reason);
       setIsConnected(false);
-      // Handle reconnection logic if needed, or rely on socket.io's attempts
     });
-
     newSocket.on('connect_error', (error) => {
       console.error('WebSocket connection error:', error.message);
       setIsConnected(false);
     });
-
     newSocket.on('authenticated', (data) => {
       console.log('WebSocket authenticated successfully:', data);
-      // Handle successful authentication, maybe update user status/data
     });
-
     newSocket.on('authentication_error', (error) => {
       console.error('WebSocket authentication failed:', error.message);
-      // Handle auth error, maybe disconnect or logout
       newSocket.disconnect();
     });
 
-
     setSocket(newSocket);
 
-  }, [authState.isAuthenticated, WS_URL, fetchSocketToken]); // Depend on auth state and fetcher
+    // Dependencies remain the same as they correctly reflect what triggers a connection attempt
+  }, [isAuthenticated, authToken, WS_URL, fetchSocketToken]);
 
   const disconnectSocket = useCallback(() => {
     if (socket) {
@@ -92,19 +83,22 @@ export const SocketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
 
   useEffect(() => {
-    if (authState.isAuthenticated && !socket) {
+    if (isAuthenticated && authToken && !socket && !isConnected) { // Added !isConnected check
+      console.log("Auth state ready & disconnected, attempting socket connection...");
       connectSocket();
-    } else if (!authState.isAuthenticated && socket) {
+    } else if (!isAuthenticated && socket) {
+      console.log("Auth state indicates logged out, disconnecting socket...");
       disconnectSocket();
     }
 
-    // Cleanup on component unmount or when auth state changes to false
+    // Cleanup logic remains the same
     return () => {
-      if (socket) {
+      if (!isAuthenticated && socket) {
+        console.log("Cleanup effect: Disconnecting socket due to auth state change.");
         disconnectSocket();
       }
     };
-  }, [authState.isAuthenticated, socket, connectSocket, disconnectSocket]); // Add dependencies
+  }, [isAuthenticated, authToken, socket, isConnected, connectSocket, disconnectSocket]); // Added isConnected
 
   const value = { socket, isConnected };
 

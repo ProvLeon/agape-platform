@@ -1,125 +1,191 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, Alert, ActivityIndicator, ScrollView } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Stack, useRouter } from 'expo-router';
-import { useAuth } from '@/contexts/AuthContext';
+import React, { useState, useCallback } from 'react';
+import { View, Text, TouchableOpacity, Alert, ActivityIndicator, ScrollView, RefreshControl } from 'react-native';
+import { Stack, useRouter } from 'expo-router'; // Removed useFocusEffect
+import { useAuth } from '@/contexts/AuthContext'; // Use for logout/auth status
+import { useCurrentUser, CURRENT_USER_QUERY_KEY } from '@/hooks/useCurrentUser'; // Import the new hook
 import Button from '@/components/Button';
-import Input from '@/components/Input'; // Assuming Input can be used for display or editing
 import { Colors } from '@/constants/Color';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { Ionicons } from '@expo/vector-icons';
+import SafeAreaWrapper from '@/components/SafeAreaWrapper';
+import Avatar from '@/components/Avatar';
+import Card, { CardContent, CardHeader, CardTitle } from '@/components/Card';
+import { useQueryClient } from '@tanstack/react-query';
+import SkeletonLoader from '@/components/SkeletonLoader';
 
-// Simple component to display profile info item
-const ProfileInfoItem = ({ label, value }: { label: string; value?: string | string[] | null }) => (
-  <View className="mb-4 pb-2 border-b border-light-cardBorder dark:border-dark-cardBorder">
-    <Text className="text-sm text-gray-500 dark:text-gray-400 mb-1">{label}</Text>
-    <Text className="text-base text-light-text dark:text-dark-text">
-      {Array.isArray(value) ? value.join(', ') : (value || 'Not set')}
-    </Text>
+// Reusable Info Row Component
+const ProfileInfoRow = ({ label, value, iconName }: { label: string; value?: string | string[] | null; iconName?: React.ComponentProps<typeof Ionicons>['name'] }) => {
+  const { colorScheme } = useColorScheme();
+  const colors = Colors[colorScheme ?? 'light'];
+  const displayValue = Array.isArray(value) ? value.join(', ') : (value || 'N/A');
+
+  return (
+    <View className="flex-row items-center mb-3 pb-3 border-b border-border/50">
+      {iconName && <Ionicons name={iconName} size={20} color={colors.mutedForeground} className="mr-3 w-5" />}
+      <View className="flex-1">
+        <Text className="text-xs text-muted-foreground mb-0.5">{label}</Text>
+        <Text className="text-base text-foreground">{displayValue}</Text>
+      </View>
+    </View>
+  );
+};
+
+const ProfileSkeleton = () => (
+  <View className="p-4">
+    <View className="items-center mb-8 pt-4">
+      <SkeletonLoader className="w-[100px] h-[100px] rounded-full mb-4" />
+      <SkeletonLoader className="h-7 w-2/3 rounded mb-2" />
+      <SkeletonLoader className="h-5 w-1/2 rounded" />
+    </View>
+    <Card className="mb-6">
+      <CardHeader><SkeletonLoader className="h-6 w-1/4 rounded" /></CardHeader>
+      <CardContent>
+        {[...Array(5)].map((_, i) => <SkeletonLoader key={i} className="h-10 w-full rounded mb-3" />)}
+      </CardContent>
+    </Card>
+    <Card>
+      <CardHeader><SkeletonLoader className="h-6 w-1/3 rounded" /></CardHeader>
+      <CardContent>
+        <SkeletonLoader className="h-10 w-full rounded mb-4" />
+        <SkeletonLoader className="h-10 w-full rounded" />
+      </CardContent>
+    </Card>
   </View>
 );
 
+
 export default function ProfileScreen() {
-  const { authState, logout, fetchUser } = useAuth();
-  const [loading, setLoading] = useState(false);
+  // Use useAuth only for actions and basic auth status
+  const { authState, logout } = useAuth();
+  // Use useCurrentUser for the user data itself
+  const { data: user, isLoading: isUserLoading, error: userError, refetch: refetchUser, isFetching: isUserFetching } = useCurrentUser();
+
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const queryClient = useQueryClient(); // Get query client
   const router = useRouter();
-  const { colorScheme: nwColorScheme } = useColorScheme();
-  const currentScheme = nwColorScheme ?? 'light'; // Default to light if undefined
-  const colors = Colors[currentScheme];
+  const { colorScheme } = useColorScheme();
+  const colors = Colors[colorScheme ?? 'light'];
 
   const handleLogout = async () => {
-    setLoading(true);
+    Alert.alert("Confirm Logout", "Are you sure?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Logout", style: "destructive",
+        onPress: async () => {
+          setIsLoggingOut(true);
+          try {
+            await logout();
+            // Invalidate user query on logout
+            await queryClient.invalidateQueries({ queryKey: CURRENT_USER_QUERY_KEY });
+            // Root layout handles redirect
+          } catch (error: any) { Alert.alert('Logout Failed', error.message); }
+          finally { setIsLoggingOut(false); }
+        },
+      },
+    ]);
+  };
+
+  const handleEditProfile = () => { /* ... */ };
+  const handleChangePassword = () => { /* ... */ };
+
+  // Manual refresh using react-query's refetch
+  const onRefresh = useCallback(async () => {
+    console.log("ProfileScreen: Manual refresh triggered.");
     try {
-      await logout();
-      // AuthProvider and RootLayout should handle redirecting to login
-    } catch (error: any) {
-      Alert.alert('Logout Failed', error.message || 'Could not log out.');
-    } finally {
-      setLoading(false);
+      await refetchUser(); // Trigger react-query refetch
+    } catch (error) {
+      console.error("Failed to refresh profile via RQ:", error);
+      Alert.alert("Refresh Failed", "Could not update profile data.");
     }
-  };
+  }, [refetchUser]);
 
-  const handleEditProfile = () => {
-    // router.push('/profile/edit'); // Navigate to edit screen
-    Alert.alert("Feature", "Edit profile functionality coming soon!");
-  };
 
-  const handleChangePassword = () => {
-    // router.push('/profile/change-password'); // Navigate to change password screen
-    Alert.alert("Feature", "Change password functionality coming soon!");
-  };
+  // --- Render Logic ---
 
-  // Refresh user data on focus (optional but good practice)
-  // useFocusEffect(
-  //   useCallback(() => {
-  //     fetchUser();
-  //   }, [fetchUser])
-  // );
-
-  const user = authState.currentUser;
-
-  if (!user) {
-    // This shouldn't happen if routing is correct, but handle defensively
+  if (isUserLoading && !user) { // Show skeleton on initial load
     return (
-      <SafeAreaView className="flex-1 justify-center items-center bg-light-background dark:bg-dark-background">
-        <Text className="text-light-text dark:text-dark-text">No user data found. Please log in.</Text>
-        <Button title="Go to Login" onPress={() => router.replace('/(auth)/login')} className="mt-4" />
-      </SafeAreaView>
+      <SafeAreaWrapper className="flex-1 bg-background">
+        <ProfileSkeleton />
+      </SafeAreaWrapper>
     );
   }
 
+  if (userError || !user) { // Handle error or case where user is null after loading (e.g., auth invalid)
+    return (
+      <SafeAreaWrapper className="flex-1 bg-background justify-center items-center p-6">
+        <Ionicons name="alert-circle-outline" size={48} color={colors.destructive} className="mb-4" />
+        <Text className="text-center text-lg text-destructive mb-4">
+          {userError ? 'Failed to load profile.' : 'User not found.'}
+        </Text>
+        {userError && <Text className="text-center text-sm text-muted-foreground mb-6">{userError.message}</Text>}
+        <Button title="Retry" onPress={() => refetchUser()} iconLeft="refresh-outline" variant="secondary" />
+        <Button title="Logout" onPress={handleLogout} variant="destructive" className="mt-4" />
+      </SafeAreaWrapper>
+    );
+  }
+
+  // --- Display user data ---
+  const roleFormatted = user.role?.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+  const joinedDateFormatted = user.joined_date ? new Date(user.joined_date).toLocaleDateString() : 'Unknown';
+
   return (
-    <SafeAreaView className="flex-1 bg-light-background dark:bg-dark-background">
+    <SafeAreaWrapper className="flex-1 bg-background">
       <Stack.Screen
         options={{
           title: 'My Profile',
-          headerShown: true,
+          headerLargeTitle: true,
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: colors.background },
+          headerTitleStyle: { color: colors.text },
           headerRight: () => (
-            <TouchableOpacity onPress={handleEditProfile} style={{ marginRight: 15 }}>
-              <Ionicons name="create-outline" size={26} color={colors.tint} />
+            <TouchableOpacity onPress={handleEditProfile} className="mr-3">
+              <Ionicons name="create-outline" size={26} color={colors.primary} />
             </TouchableOpacity>
           ),
         }}
       />
-      <ScrollView className="p-6">
-        {/* Profile Header */}
-        <View className="items-center mb-8">
-          <View className="w-24 h-24 rounded-full bg-gray-300 dark:bg-gray-600 mb-3 items-center justify-center">
-            {/* TODO: Replace with actual profile Image */}
-            <Ionicons name="person" size={48} color={colors.icon} />
-          </View>
-          <Text className="text-2xl font-bold text-light-text dark:text-dark-text">{user.first_name} {user.last_name}</Text>
-          <Text className="text-base text-gray-500 dark:text-gray-400">{user.email}</Text>
+      <ScrollView
+        className="flex-1"
+        refreshControl={
+          // Use RQ's isFetching for the refresh control state
+          <RefreshControl refreshing={isUserFetching && !isUserLoading} onRefresh={onRefresh} tintColor={colors.primary} />
+        }
+        contentContainerClassName="p-4 pb-8"
+      >
+        {/* ... (Profile Header and Cards using `user` data as before) ... */}
+        <View className="items-center mb-8 pt-4">
+          <Avatar source={user.profile_image} name={`${user.first_name} ${user.last_name}`} size={100} className="mb-4 border-2 border-primary/50" />
+          <Text className="text-2xl font-bold text-foreground">{user.first_name} {user.last_name}</Text>
+          <Text className="text-base text-muted-foreground">{user.email}</Text>
         </View>
 
-        {/* Profile Details */}
-        <ProfileInfoItem label="Role" value={user.role?.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())} />
-        {/* TODO: Fetch and display camp name if user.camp_id exists */}
-        <ProfileInfoItem label="Camp" value={user.camp_id ? 'Loading...' : 'Not Assigned'} />
-        <ProfileInfoItem label="Phone" value={user.phone} />
-        <ProfileInfoItem label="Spiritual Gifts" value={user.spiritual_gifts} />
-        <ProfileInfoItem label="Joined Date" value={user.joined_date ? new Date(user.joined_date).toLocaleDateString() : 'Unknown'} />
+        <Card className="mb-6">
+          <CardHeader><CardTitle>Details</CardTitle></CardHeader>
+          <CardContent>
+            <ProfileInfoRow label="Role" value={roleFormatted} iconName="shield-checkmark-outline" />
+            {/* TODO: Fetch camp name separately if needed, maybe another query */}
+            <ProfileInfoRow label="Camp" value={user.camp_id ? 'Camp ID: ' + user.camp_id : 'Not Assigned'} iconName="people-outline" />
+            <ProfileInfoRow label="Phone" value={user.phone} iconName="call-outline" />
+            <ProfileInfoRow label="Joined Date" value={joinedDateFormatted} iconName="calendar-outline" />
+            <ProfileInfoRow label="Spiritual Gifts" value={user.spiritual_gifts} iconName="sparkles-outline" />
+            <View className="flex-row items-center pt-3">
+              <Ionicons name="log-in-outline" size={20} color={colors.mutedForeground} className="mr-3 w-5" />
+              <View className="flex-1">
+                <Text className="text-xs text-muted-foreground mb-0.5">Last Login</Text>
+                <Text className="text-base text-foreground">{user.last_login ? new Date(user.last_login).toLocaleString() : 'Never'}</Text>
+              </View>
+            </View>
+          </CardContent>
+        </Card>
 
-
-        {/* Actions */}
-        <View className="mt-8">
-          <Button
-            title="Change Password"
-            onPress={handleChangePassword}
-            variant="secondary"
-            className="mb-4"
-          />
-          {loading ? (
-            <ActivityIndicator size="large" color={colors.destructive} />
-          ) : (
-            <Button
-              title="Logout"
-              onPress={handleLogout}
-              variant="destructive"
-            />
-          )}
-        </View>
+        <Card>
+          <CardHeader><CardTitle>Account Actions</CardTitle></CardHeader>
+          <CardContent>
+            <Button title="Change Password" onPress={handleChangePassword} variant="outline" iconLeft="key-outline" className="mb-4 w-full" />
+            <Button title="Logout" onPress={handleLogout} variant="destructive" iconLeft="log-out-outline" isLoading={isLoggingOut} disabled={isLoggingOut} className="w-full" />
+          </CardContent>
+        </Card>
       </ScrollView>
-    </SafeAreaView>
+    </SafeAreaWrapper>
   );
 }

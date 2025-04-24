@@ -1,193 +1,249 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, ActivityIndicator, TouchableOpacity, RefreshControl } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Stack, useRouter } from 'expo-router';
-import { Message, User } from '@/types'; // Adjust path
-import { getMessages } from '@/services/messageService'; // Create this service
+import React, { useState, useCallback } from 'react';
+import { View, Text, FlatList, ActivityIndicator, TouchableOpacity, RefreshControl, Alert } from 'react-native';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Stack, useRouter, useFocusEffect } from 'expo-router';
+import { Message, User } from '@/types';
+import { getMessages } from '@/services/messageService';
+import { useAuth } from '@/contexts/AuthContext';
 import { Colors } from '@/constants/Color';
 import { useColorScheme } from '@/hooks/useColorScheme';
-import { useAuth } from '@/contexts/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
-import { Alert } from 'react-native';
+import SafeAreaWrapper from '@/components/SafeAreaWrapper';
+import ListItem from '@/components/ListItem';
+import Avatar from '@/components/Avatar';
+import SkeletonLoader from '@/components/SkeletonLoader'; // Assuming creation
+import Button from '@/components/Button';
 
-// Placeholder ConversationItem component
+const MESSAGES_QUERY_KEY = 'conversations';
+
+// Basic conversation grouping logic (Client-side - Needs Backend Improvement)
+const groupMessagesIntoConversations = (messages: Message[], currentUserId: string): Message[] => {
+  const conversations: Record<string, Message> = {};
+  messages.forEach(msg => {
+    const isSender = msg.sender_id === currentUserId;
+    const partnerId = isSender ? msg.recipient_id : msg.sender_id;
+    const partner = isSender ? msg.recipient : msg.sender;
+
+    if (partnerId && partner) { // Ensure partner exists
+      // Keep only the latest message for each conversation partner
+      if (!conversations[partnerId] || new Date(msg.created_at) > new Date(conversations[partnerId].created_at)) {
+        conversations[partnerId] = { ...msg, is_read: true }; // Default to read
+      }
+      // Mark conversation as unread if *any* message from the partner is unread
+      if (msg.sender_id === partnerId && !msg.read_by?.includes(currentUserId)) {
+        conversations[partnerId].is_read = false;
+      }
+    } else if (msg.recipient_type === 'ministry' || msg.recipient_type === 'camp') {
+      // Handle group/ministry chats - use recipient_id or a placeholder
+      const groupId = `${msg.recipient_type}-${msg.recipient_id || 'ministry'}`;
+      if (!conversations[groupId] || new Date(msg.created_at) > new Date(conversations[groupId].created_at)) {
+        conversations[groupId] = { ...msg, is_read: true }; // Default to read
+      }
+      // Add unread logic for group chats if needed (more complex)
+    }
+  });
+  // Sort conversations by latest message date
+  return Object.values(conversations).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+};
+
+// Skeleton component for a single conversation item
+const ConversationListItemSkeleton = () => (
+  <View className="flex-row items-center p-4 bg-card border-b border-border">
+    <SkeletonLoader className="w-12 h-12 rounded-full mr-3" />
+    <View className="flex-1">
+      <SkeletonLoader className="h-4 w-3/5 rounded mb-1.5" />
+      <SkeletonLoader className="h-3 w-4/5 rounded" />
+    </View>
+    <SkeletonLoader className="h-3 w-12 rounded self-start" />
+  </View>
+);
+
+
+// Enhanced ConversationItem
 const ConversationItem = ({ item, onPress, currentUserId }: { item: Message, onPress: () => void, currentUserId: string | null }) => {
-  const { colorScheme: nwColorScheme } = useColorScheme();
-  const currentScheme = nwColorScheme ?? 'light'; // Default to light if undefined
-  const colors = Colors[currentScheme];
+  const { colorScheme } = useColorScheme();
+  const colors = Colors[colorScheme ?? 'light'];
   const isSender = item.sender_id === currentUserId;
-  const otherParty = isSender ? item.recipient : item.sender;
-  const otherPartyName = otherParty && 'first_name' in otherParty ? `${otherParty.first_name} ${otherParty.last_name}` : (otherParty?.name || 'Unknown');
-  const otherPartyImage = otherParty && 'profile_image' in otherParty ? otherParty.profile_image : null; // Assuming profile image URL
+
+  let title = 'Unknown';
+  let avatarName = '?';
+  let avatarSource = null; // TODO: Add avatar source logic
+
+  if (item.recipient_type === 'user') {
+    const otherParty = isSender ? item.recipient : item.sender;
+    if (otherParty && 'first_name' in otherParty) { // Check if it's a User object
+      title = `${otherParty.first_name} ${otherParty.last_name}`;
+      avatarName = title;
+      // avatarSource = otherParty.profile_image; // Uncomment when profile_image is available
+    } else if (otherParty && 'name' in otherParty) { // Check if it's a simple name object
+      title = otherParty.name;
+      avatarName = title;
+    }
+  } else if (item.recipient_type === 'camp' && item.recipient) {
+    title = `Camp: ${item.recipient?.name || item.camp_name || 'Unknown'}`; // Use camp name if available
+    avatarName = title;
+    // Use a camp icon or generic avatar
+  } else if (item.recipient_type === 'ministry') {
+    title = "Ministry Announcements";
+    avatarName = "A"; // Example
+    // Use ministry icon
+  }
+
 
   const messageDate = new Date(item.created_at);
   const timeString = messageDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const dateString = messageDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
   const isToday = new Date().toDateString() === messageDate.toDateString();
+  const isUnread = !item.is_read && !isSender;
 
   return (
-    <TouchableOpacity
+    <ListItem
       onPress={onPress}
-      className="flex-row items-center bg-light-card dark:bg-dark-card p-3 mb-1 rounded-lg border-b border-light-cardBorder dark:border-dark-cardBorder"
-    >
-      {/* Profile Image Placeholder */}
-      <View className="w-12 h-12 rounded-full bg-gray-300 dark:bg-gray-600 mr-3 items-center justify-center">
-        {/* TODO: Replace with actual Image component */}
-        <Ionicons name="person" size={24} color={colors.icon} />
-      </View>
-
-      {/* Text Content */}
-      <View className="flex-1">
-        <Text className="text-base font-semibold text-light-text dark:text-dark-text" numberOfLines={1}>{otherPartyName}</Text>
-        <Text className={`text-sm ${item.is_read ? 'text-gray-500 dark:text-gray-400' : 'text-light-text dark:text-dark-text font-medium'}`} numberOfLines={1}>
-          {isSender ? 'You: ' : ''}{item.content}
+      leftElement={<Avatar name={avatarName} source={avatarSource} size={48} />}
+      title={title}
+      subtitle={
+        <Text className={`text-sm ${isUnread ? 'font-semibold text-foreground' : 'text-muted-foreground'}`} numberOfLines={1}>
+          {isSender && item.recipient_type === 'user' ? 'You: ' : ''}{item.content}
         </Text>
-      </View>
-
-      {/* Timestamp & Read Status */}
-      <View className="items-end ml-2 w-16">
-        <Text className="text-xs text-gray-500 dark:text-gray-400 mb-1">{isToday ? timeString : dateString}</Text>
-        {!item.is_read && !isSender && (
-          <View className="w-2.5 h-2.5 bg-light-primary dark:bg-dark-primary rounded-full" />
-        )}
-      </View>
-    </TouchableOpacity>
+      }
+      rightElement={
+        <View className="items-end">
+          <Text className="text-xs text-muted-foreground mb-1">{isToday ? timeString : dateString}</Text>
+          {isUnread && <View className="w-2.5 h-2.5 bg-primary rounded-full" />}
+        </View>
+      }
+      bottomBorder
+      className="bg-card px-4 py-3" // Use card background, adjust padding
+    />
   );
 };
 
-// TODO: This screen needs significant refinement to handle different message types (ministry, camp, personal)
-// Likely needs tabs or sections for each type. This is a simplified placeholder for personal messages.
+
 export default function MessagesScreen() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // TODO: Add state for filtering between Personal / Camp / Ministry messages
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { authState } = useAuth();
-  const { colorScheme: nwColorScheme } = useColorScheme();
-  const currentScheme = nwColorScheme ?? 'light';
-  const colors = Colors[currentScheme];
+  const { colorScheme } = useColorScheme();
+  const colors = Colors[colorScheme ?? 'light'];
+  const currentUserId = authState.currentUser?._id ?? null;
 
-  // Simplified fetch for personal messages (needs proper grouping/logic)
-  const fetchConversations = useCallback(async () => {
-    if (!authState.currentUser) return;
-    setLoading(true);
-    setError(null);
-    try {
-      // Fetch personal messages - NEED TO GROUP BY CONVERSATION PARTNER
-      // This endpoint fetches individual messages, not conversations.
-      // A real implementation needs backend support for conversation lists or client-side grouping.
-      const response = await getMessages({ type: 'personal' });
+  const { data: messagesData, isLoading, error, isFetching, refetch } = useQuery({
+    // QueryKey needs to be more specific if filtering is added
+    queryKey: [MESSAGES_QUERY_KEY, currentUserId],
+    queryFn: async () => {
+      if (!currentUserId) return { messages: [], total: 0, page: 1, per_page: 0, pages: 0 };
+      // Fetch ALL messages for now and group client-side
+      // Ideally, backend provides conversation endpoints
+      const response = await getMessages({ per_page: 100 }); // Fetch more messages for grouping
+      const conversations = groupMessagesIntoConversations(response.messages, currentUserId);
+      return { conversations }; // Return grouped data
+    },
+    enabled: !!currentUserId, // Only run query if user is loaded
+    staleTime: 1 * 60 * 1000, // 1 minute stale time for messages
+  });
 
-      // --- *** VERY BASIC GROUPING LOGIC (Replace with robust solution) *** ---
-      const conversations: Record<string, Message> = {};
-      response.messages.forEach(msg => {
-        const partnerId = msg.sender_id === authState.currentUser?._id ? msg.recipient_id : msg.sender_id;
-        if (partnerId) {
-          // Keep only the latest message for each conversation partner
-          if (!conversations[partnerId] || new Date(msg.created_at) > new Date(conversations[partnerId].created_at)) {
-            conversations[partnerId] = msg;
-          }
-          // Mark conversation as unread if any message from partner is unread
-          if (msg.sender_id === partnerId && !msg.read_by?.includes(authState.currentUser?._id ?? '')) {
-            if (conversations[partnerId]) conversations[partnerId].is_read = false;
-          }
-        }
-      });
-      const latestMessages = Object.values(conversations).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-      // Set is_read correctly based on aggregation (if not already done)
-      latestMessages.forEach(msg => {
-        if (msg.sender_id !== authState.currentUser?._id && !msg.read_by?.includes(authState.currentUser?._id ?? '')) {
-          msg.is_read = false;
-        } else {
-          msg.is_read = true; // Default to read if sent by self or already read
-        }
-      });
+  const onRefresh = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: [MESSAGES_QUERY_KEY, currentUserId] });
+  }, [queryClient, currentUserId]);
 
-      setMessages(latestMessages);
-      // --- *** END BASIC GROUPING *** ---
-
-    } catch (err: any) {
-      console.error("Failed to fetch messages:", err);
-      setError(err.message || 'Failed to load messages.');
-      setMessages([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [authState.currentUser]);
-
-  useEffect(() => {
-    fetchConversations();
-  }, [fetchConversations]);
-
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    fetchConversations();
-  }, [fetchConversations]);
+  useFocusEffect(
+    useCallback(() => {
+      refetch();
+    }, [refetch])
+  );
 
   const handleConversationPress = (item: Message) => {
-    const partnerId = item.sender_id === authState.currentUser?._id ? item.recipient_id : item.sender_id;
-    if (partnerId) {
-      router.push(`/chat/${partnerId}`);
+    if (item.recipient_type === 'user') {
+      const partnerId = item.sender_id === currentUserId ? item.recipient_id : item.sender_id;
+      if (partnerId) {
+        router.push(`/chat/${partnerId}`);
+      }
+    } else if (item.recipient_type === 'camp') {
+      // TODO: Navigate to Camp Chat Screen
+      Alert.alert("TODO", `Navigate to Camp Chat for ID: ${item.recipient_id}`);
     } else {
-      // Handle navigation for ministry/camp messages differently
-      console.warn("Cannot determine chat partner for message:", item._id);
+      // TODO: Navigate to Ministry Chat Screen
+      Alert.alert("TODO", "Navigate to Ministry Chat");
     }
   };
 
   const handleNewMessage = () => {
-    // router.push('/messages/new'); // Navigate to screen to select contact
     Alert.alert("Feature", "New message functionality coming soon!");
   };
 
+  const renderContent = () => {
+    if (isLoading && !messagesData) {
+      return (
+        <View className="flex-1">
+          {[...Array(10)].map((_, index) => <ConversationListItemSkeleton key={index} />)}
+        </View>
+      );
+    }
+    if (error) {
+      return (
+        <View className="flex-1 justify-center items-center px-6">
+          <Ionicons name="chatbubbles-outline" size={48} color={colors.destructive} className="mb-4" />
+          <Text className="text-center text-lg text-destructive mb-4">
+            Failed to load messages.
+          </Text>
+          <Text className="text-center text-sm text-muted-foreground mb-6">{error.message}</Text>
+          <Button title="Retry" onPress={() => refetch()} iconLeft="refresh-outline" variant="secondary" />
+        </View>
+      );
+    }
+    if (!messagesData?.conversations?.length) {
+      return (
+        <View className="flex-1 justify-center items-center px-6">
+          <Ionicons name="mail-unread-outline" size={48} color={colors.mutedForeground} className="mb-4" />
+          <Text className="text-lg text-muted-foreground">No messages yet.</Text>
+          <Text className="text-sm text-muted-foreground text-center mt-2">Start a new conversation!</Text>
+          <Button title="New Message" onPress={handleNewMessage} iconLeft="add-outline" className="mt-6" />
+        </View>
+      );
+    }
+
+    return (
+      <FlatList
+        data={messagesData.conversations}
+        renderItem={({ item }) => (
+          <ConversationItem
+            item={item}
+            onPress={() => handleConversationPress(item)}
+            currentUserId={currentUserId}
+          />
+        )}
+        keyExtractor={(item) => item._id} // Use message ID for now, needs unique conversation ID ideally
+        refreshControl={
+          <RefreshControl refreshing={isFetching && !isLoading} onRefresh={onRefresh} tintColor={colors.primary} />
+        }
+        contentContainerClassName="bg-background"
+      />
+    );
+  }
 
   return (
-    <SafeAreaView className="flex-1 bg-light-background dark:bg-dark-background">
+    <SafeAreaWrapper className="flex-1 bg-background">
       <Stack.Screen
         options={{
           title: 'Messages',
-          headerShown: true,
+          headerLargeTitle: true,
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: colors.background },
+          headerTitleStyle: { color: colors.text },
           headerRight: () => (
-            <TouchableOpacity onPress={handleNewMessage} style={{ marginRight: 15 }}>
-              <Ionicons name="create-outline" size={26} color={colors.tint} />
+            <TouchableOpacity onPress={handleNewMessage} className="mr-3">
+              <Ionicons name="create-outline" size={26} color={colors.primary} />
             </TouchableOpacity>
           ),
+          // TODO: Add Header with Tabs for filtering (Personal/Camp/Ministry)
         }}
       />
-
-      {/* TODO: Add Tabs for Ministry / Camp / Direct */}
-      <View className="flex-1 p-4">
-        {loading && !refreshing ? (
-          <ActivityIndicator size="large" color={colors.tint} className="mt-10" />
-        ) : error ? (
-          <View className="items-center justify-center mt-10">
-            <Text className="text-destructive dark:text-destructive-dark">{error}</Text>
-            <TouchableOpacity onPress={fetchConversations} className="mt-2 p-2 bg-light-primary dark:bg-dark-primary rounded">
-              <Text className="text-white">Retry</Text>
-            </TouchableOpacity>
-          </View>
-        ) : messages.length === 0 ? (
-          <View className="items-center justify-center flex-1">
-            <Text className="text-gray-500 dark:text-gray-400">No messages yet.</Text>
-          </View>
-        ) : (
-          <FlatList
-            data={messages}
-            renderItem={({ item }) => (
-              <ConversationItem
-                item={item}
-                onPress={() => handleConversationPress(item)}
-                currentUserId={authState.currentUser?._id ?? null}
-              />
-            )}
-            keyExtractor={(item) => item._id}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.tint} />
-            }
-          />
-        )}
-      </View>
-    </SafeAreaView>
+      {/* Placeholder for potential filter tabs */}
+      {/* <View className="p-2 border-b border-border">
+          <Text>Filter Tabs Here</Text>
+      </View> */}
+      {renderContent()}
+    </SafeAreaWrapper>
   );
 }

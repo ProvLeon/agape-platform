@@ -1,181 +1,237 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, ActivityIndicator, RefreshControl, TouchableOpacity, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { Camp, User, Message, Meeting } from '@/types'; // Adjust path
-import { getCampDetails, getCampMembers } from '@/services/campService'; // Create this service
-import { getMessages } from '@/services/messageService'; // Reuse or create specific service
-import { getMeetings } from '@/services/meetingService'; // Reuse or create specific service
+import React, { useCallback } from 'react';
+import { View, Text, ScrollView, ActivityIndicator, RefreshControl, TouchableOpacity, Alert, FlatList } from 'react-native';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Stack, useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
+import { Camp, User, Message, Meeting } from '@/types';
+import { getCampDetails, getCampMembers } from '@/services/campService';
+import { getMessages } from '@/services/messageService';
+import { getMeetings } from '@/services/meetingService';
 import { Colors } from '@/constants/Color';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { Ionicons } from '@expo/vector-icons';
 import Button from '@/components/Button';
+import SafeAreaWrapper from '@/components/SafeAreaWrapper';
+import Avatar from '@/components/Avatar';
+import Card, { CardHeader, CardTitle, CardContent, CardDescription } from '@/components/Card';
+import ListItem from '@/components/ListItem';
+import SkeletonLoader from '@/components/SkeletonLoader'; // Assuming creation
 
-// Placeholder components for Members, Messages, Meetings lists
-const MemberItem = ({ member }: { member: User }) => (
-  <View className="flex-row items-center p-2 border-b border-light-cardBorder dark:border-dark-cardBorder">
-    {/* Placeholder Image */}
-    <View className="w-8 h-8 rounded-full bg-gray-300 dark:bg-gray-600 mr-3 items-center justify-center">
-      <Ionicons name="person" size={16} color="#fff" />
-    </View>
-    <Text className="text-light-text dark:text-dark-text">{member.first_name} {member.last_name}</Text>
-    {/* Optionally add role/leader indicator */}
+const CAMP_DETAILS_QUERY_KEY = 'campDetails';
+
+// Skeleton Loader for the Camp Detail Screen
+const CampDetailSkeleton = () => (
+  <View className="p-4">
+    {/* Header Skeleton */}
+    <Card className="mb-6">
+      <CardHeader>
+        <SkeletonLoader className="h-8 w-3/4 rounded mb-2" />
+        <SkeletonLoader className="h-4 w-1/2 rounded mb-3" />
+        <SkeletonLoader className="h-4 w-1/3 rounded" />
+      </CardHeader>
+    </Card>
+
+    {/* Sections Skeleton */}
+    {[...Array(3)].map((_, index) => (
+      <Card key={index} className="mb-6">
+        <CardHeader>
+          <SkeletonLoader className="h-6 w-1/2 rounded mb-2" />
+        </CardHeader>
+        <CardContent>
+          <SkeletonLoader className="h-4 w-full rounded mb-2" />
+          <SkeletonLoader className="h-4 w-5/6 rounded mb-2" />
+          <SkeletonLoader className="h-4 w-3/4 rounded" />
+        </CardContent>
+      </Card>
+    ))}
   </View>
 );
 
+
+// Sub-components for displaying items within sections
+const MemberItem = ({ member }: { member: User }) => (
+  <ListItem
+    title={`${member.first_name} ${member.last_name}`}
+    leftElement={<Avatar name={`${member.first_name} ${member.last_name}`} source={member.profile_image} size={36} />}
+    bottomBorder={false} // No border within the list
+    className="px-0 py-2" // Adjust padding as needed
+  // Add onPress to view member profile if needed
+  />
+);
+
 const CampMessageItem = ({ message }: { message: Message }) => (
-  <View className="p-2 border-b border-light-cardBorder dark:border-dark-cardBorder">
-    <Text className="text-sm font-semibold text-light-text dark:text-dark-text">{message.sender?.first_name || 'User'} {message.sender?.last_name || ''}</Text>
-    <Text className="text-xs text-gray-500 dark:text-gray-400 mb-1">{new Date(message.created_at).toLocaleString()}</Text>
-    <Text className="text-light-text dark:text-dark-text">{message.content}</Text>
+  <View className="py-2 border-b border-border/50">
+    <View className="flex-row items-center mb-1">
+      <Avatar name={`${message.sender?.first_name} ${message.sender?.last_name}`} source={message.sender?.profile_image} size={24} className="mr-2" />
+      <Text className="text-sm font-medium text-foreground">{message.sender?.first_name || 'User'} {message.sender?.last_name || ''}</Text>
+      <Text className="text-xs text-muted-foreground ml-auto">{new Date(message.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</Text>
+    </View>
+    <Text className="text-sm text-foreground ml-8">{message.content}</Text>
   </View>
 );
 
 const CampMeetingItem = ({ meeting, onPress }: { meeting: Meeting, onPress: () => void }) => (
-  <TouchableOpacity onPress={onPress} className="p-2 border-b border-light-cardBorder dark:border-dark-cardBorder">
-    <Text className="text-sm font-semibold text-light-text dark:text-dark-text">{meeting.title}</Text>
-    <Text className="text-xs text-gray-500 dark:text-gray-400">{new Date(meeting.scheduled_start).toLocaleString()}</Text>
-    <Text className={`text-xs capitalize ${meeting.status === 'scheduled' ? 'text-blue-500' : 'text-gray-500'}`}>{meeting.status}</Text>
-  </TouchableOpacity>
+  <ListItem
+    title={meeting.title}
+    subtitle={new Date(meeting.scheduled_start).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+    leftElement={<Ionicons name="calendar-outline" size={24} className="text-secondary" />}
+    onPress={onPress}
+    showChevron
+    bottomBorder={false}
+    className="px-0 py-2"
+  />
 );
 
 
 export default function CampDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const [camp, setCamp] = useState<Camp | null>(null);
-  const [members, setMembers] = useState<User[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [meetings, setMeetings] = useState<Meeting[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const { colorScheme: nwColorScheme } = useColorScheme();
-  const currentScheme = nwColorScheme ?? 'light'; // Default to light if undefined
-  const colors = Colors[currentScheme];
+  const queryClient = useQueryClient();
+  const { colorScheme } = useColorScheme();
+  const colors = Colors[colorScheme ?? 'light'];
 
-  const fetchData = useCallback(async () => {
-    if (!id) return;
-    setLoading(true);
-    setError(null);
-    try {
-      // Fetch all data in parallel
+  // Fetch all camp-related data using React Query
+  const { data, isLoading, error, refetch, isFetching } = useQuery({
+    queryKey: [CAMP_DETAILS_QUERY_KEY, id],
+    queryFn: async () => {
+      if (!id) throw new Error("Camp ID is required");
+      // Fetch data in parallel
       const [campDetails, membersData, messagesData, meetingsData] = await Promise.all([
         getCampDetails(id),
-        getCampMembers(id), // TODO: Pagination
-        getMessages({ type: 'camp', camp_id: id, limit: 10 }), // Fetch latest 10 camp messages
-        getMeetings({ camp_id: id, upcoming: 'true', limit: 5 }) // Fetch upcoming 5 camp meetings
+        getCampMembers(id, { per_page: 5 }), // Limit members shown initially
+        getMessages({ type: 'camp', camp_id: id, limit: 3 }), // Limit messages
+        getMeetings({ camp_id: id, upcoming: 'true', limit: 3, status: 'scheduled,in_progress' }) // Limit upcoming meetings
       ]);
+      return {
+        camp: campDetails.camp,
+        members: membersData.members,
+        messages: messagesData.messages,
+        meetings: meetingsData.meetings,
+      };
+    },
+    enabled: !!id, // Only run if ID exists
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
 
-      setCamp(campDetails.camp);
-      setMembers(membersData.members);
-      setMessages(messagesData.messages);
-      setMeetings(meetingsData.meetings);
+  const onRefresh = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: [CAMP_DETAILS_QUERY_KEY, id] });
+  }, [queryClient, id]);
 
-    } catch (err: any) {
-      console.error("Failed to fetch camp data:", err);
-      setError(err.message || 'Failed to load camp details.');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [id]);
+  // Refetch on focus
+  useFocusEffect(onRefresh);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  const camp = data?.camp;
+  const members = data?.members ?? [];
+  const messages = data?.messages ?? [];
+  const meetings = data?.meetings ?? [];
 
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    fetchData();
-  }, [fetchData]);
 
-  if (loading && !refreshing) {
-    return (
-      <SafeAreaView className="flex-1 justify-center items-center bg-light-background dark:bg-dark-background">
-        <ActivityIndicator size="large" color={colors.tint} />
-      </SafeAreaView>
-    );
+  // --- Render Logic ---
+  if (isLoading && !data) {
+    return <SafeAreaWrapper className="flex-1 bg-background"><CampDetailSkeleton /></SafeAreaWrapper>;
   }
 
   if (error) {
     return (
-      <SafeAreaView className="flex-1 justify-center items-center bg-light-background dark:bg-dark-background p-4">
-        <Text className="text-destructive dark:text-destructive-dark text-center mb-4">{error}</Text>
-        <Button title="Retry" onPress={fetchData} />
-      </SafeAreaView>
+      <SafeAreaWrapper className="flex-1 bg-background justify-center items-center p-6">
+        <Ionicons name="alert-circle-outline" size={48} color={colors.destructive} className="mb-4" />
+        <Text className="text-center text-lg text-destructive mb-4">Failed to load camp details.</Text>
+        <Text className="text-center text-sm text-muted-foreground mb-6">{error.message}</Text>
+        <Button title="Retry" onPress={() => refetch()} iconLeft="refresh-outline" variant="secondary" />
+      </SafeAreaWrapper>
     );
   }
 
   if (!camp) {
     return (
-      <SafeAreaView className="flex-1 justify-center items-center bg-light-background dark:bg-dark-background">
-        <Text className="text-gray-500 dark:text-gray-400">Camp not found.</Text>
-      </SafeAreaView>
+      <SafeAreaWrapper className="flex-1 bg-background justify-center items-center">
+        <Text className="text-lg text-muted-foreground">Camp not found.</Text>
+      </SafeAreaWrapper>
     );
   }
 
+
   return (
-    <SafeAreaView className="flex-1 bg-light-background dark:bg-dark-background">
-      <Stack.Screen options={{ title: camp.name || 'Camp Details', headerShown: true }} />
+    <SafeAreaWrapper className="flex-1 bg-background">
+      <Stack.Screen
+        options={{
+          title: camp.name || 'Camp Details',
+          headerShown: true,
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: colors.background },
+          headerTitleStyle: { color: colors.text },
+          headerTintColor: colors.primary, // Back button color
+          // Add Edit button for leader/admin?
+        }}
+      />
       <ScrollView
         className="flex-1"
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.tint} />
+          <RefreshControl refreshing={isFetching && !isLoading} onRefresh={onRefresh} tintColor={colors.primary} />
         }
+        contentContainerClassName="p-4"
       >
-        {/* Camp Header Info */}
-        <View className="p-4 bg-light-card dark:bg-dark-card border-b border-light-cardBorder dark:border-dark-cardBorder">
-          <Text className="text-2xl font-bold text-light-text dark:text-dark-text mb-1">{camp.name}</Text>
-          {camp.description && <Text className="text-base text-gray-600 dark:text-gray-400 mb-2">{camp.description}</Text>}
-          {camp.leader && <Text className="text-sm text-gray-500 dark:text-gray-400">Leader: {camp.leader.first_name} {camp.leader.last_name}</Text>}
-          {/* TODO: Add "Join/Leave Camp" button based on membership status */}
-        </View>
+        {/* Camp Header Card */}
+        <Card className="mb-6">
+          <CardHeader className="items-center">
+            <Avatar name={camp.name} size={80} className="mb-4" />
+            <CardTitle className="text-2xl text-center">{camp.name}</CardTitle>
+            {camp.description && <CardDescription className="text-center mt-1">{camp.description}</CardDescription>}
+            {camp.leader && <Text className="text-sm text-muted-foreground mt-2">Leader: {camp.leader.first_name} {camp.leader.last_name}</Text>}
+          </CardHeader>
+          <CardContent className="pt-4 border-t border-border">
+            {/* TODO: Add Join/Leave Camp button logic */}
+            <Button title="Join Camp" iconLeft="add-circle-outline" variant="outline" />
+          </CardContent>
+        </Card>
 
-        {/* Sections */}
-        <View className="p-4">
-          {/* Announcements/Messages Section */}
-          <View className="mb-6">
-            <Text className="text-xl font-semibold text-light-text dark:text-dark-text mb-2">Announcements & Messages</Text>
+        {/* Announcements/Messages Section */}
+        <Card className="mb-6">
+          <CardHeader className="flex-row justify-between items-center">
+            <CardTitle>Messages</CardTitle>
+            <Button title="View All" variant="link" size="sm" onPress={() => Alert.alert('TODO', 'Navigate to full camp chat')} />
+          </CardHeader>
+          <CardContent>
             {messages.length > 0 ? (
               messages.map(msg => <CampMessageItem key={msg._id} message={msg} />)
             ) : (
-              <Text className="text-gray-500 dark:text-gray-400">No recent messages.</Text>
+              <Text className="text-muted-foreground text-center py-4">No recent messages.</Text>
             )}
-            {/* TODO: Link to full camp chat */}
-            <TouchableOpacity onPress={() => Alert.alert('TODO', 'Navigate to full camp chat')} className="mt-2">
-              <Text className="text-light-primary dark:text-dark-primary text-sm font-medium">View All Messages...</Text>
-            </TouchableOpacity>
-            {/* TODO: Add input to send message */}
-          </View>
+            {/* TODO: Add input to send message if permissions allow */}
+          </CardContent>
+        </Card>
 
-          {/* Upcoming Meetings Section */}
-          <View className="mb-6">
-            <Text className="text-xl font-semibold text-light-text dark:text-dark-text mb-2">Upcoming Meetings</Text>
+        {/* Upcoming Meetings Section */}
+        <Card className="mb-6">
+          <CardHeader className="flex-row justify-between items-center">
+            <CardTitle>Upcoming Meetings</CardTitle>
+            <Button title="View All" variant="link" size="sm" onPress={() => router.push('/(tabs)/meetings')} /> {/* Link to main meetings tab */}
+          </CardHeader>
+          <CardContent>
             {meetings.length > 0 ? (
               meetings.map(meet => <CampMeetingItem key={meet._id} meeting={meet} onPress={() => router.push(`/meeting/${meet._id}`)} />)
             ) : (
-              <Text className="text-gray-500 dark:text-gray-400">No upcoming meetings scheduled.</Text>
+              <Text className="text-muted-foreground text-center py-4">No upcoming meetings.</Text>
             )}
-            {/* TODO: Link to all camp meetings */}
-          </View>
+          </CardContent>
+        </Card>
 
-          {/* Members Section */}
-          <View>
-            <Text className="text-xl font-semibold text-light-text dark:text-dark-text mb-2">Members ({members.length})</Text>
+        {/* Members Section */}
+        <Card className="mb-6">
+          <CardHeader className="flex-row justify-between items-center">
+            <CardTitle>Members ({camp.members_count ?? members.length})</CardTitle>
+            {/* TODO: Link to full member list */}
+            <Button title="View All" variant="link" size="sm" onPress={() => Alert.alert('TODO', 'Navigate to full member list')} />
+          </CardHeader>
+          <CardContent>
             {members.length > 0 ? (
-              members.slice(0, 5).map(mem => <MemberItem key={mem._id} member={mem} />) // Show first 5
+              members.map(mem => <MemberItem key={mem._id} member={mem} />)
             ) : (
-              <Text className="text-gray-500 dark:text-gray-400">No members found.</Text>
+              <Text className="text-muted-foreground text-center py-4">No members to display.</Text>
             )}
-            {members.length > 5 && (
-              <TouchableOpacity onPress={() => Alert.alert('TODO', 'Navigate to full member list')} className="mt-2">
-                <Text className="text-light-primary dark:text-dark-primary text-sm font-medium">View All Members...</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
+          </CardContent>
+        </Card>
+
       </ScrollView>
-    </SafeAreaView>
+    </SafeAreaWrapper>
   );
 }

@@ -1,252 +1,265 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, FlatList, ActivityIndicator, TouchableOpacity, RefreshControl, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Stack, useRouter } from 'expo-router';
-import { PrayerRequest } from '@/types'; // Adjust path
-import { getPrayerRequests, prayForRequest } from '@/services/prayerService'; // Create this service
-import Button from '@/components/Button'; // Assuming creation
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Stack, useRouter, useFocusEffect } from 'expo-router';
+import { PrayerRequest } from '@/types';
+import { getPrayerRequests, prayForRequest } from '@/services/prayerService';
+import Button from '@/components/Button';
 import { Colors } from '@/constants/Color';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { useAuth } from '@/contexts/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
+import SafeAreaWrapper from '@/components/SafeAreaWrapper';
+import Card, { CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from '@/components/Card';
+import SkeletonLoader from '@/components/SkeletonLoader'; // Assuming creation
 
-// Placeholder PrayerRequestCard component
-const PrayerRequestCard = ({ item, onPrayPress, currentUserId }: { item: PrayerRequest, onPrayPress: (id: string, isPraying: boolean) => void, currentUserId: string | null }) => {
-  const { colorScheme: nwColorScheme } = useColorScheme();
-  const currentScheme = nwColorScheme ?? 'light'; // Default to light if undefined
-  const colors = Colors[currentScheme];
+const PRAYER_QUERY_KEY = 'prayerRequests';
+
+// Skeleton for Prayer Card
+const PrayerCardSkeleton = () => (
+  <Card className="mb-4 opacity-70">
+    <CardHeader className="pb-2">
+      <SkeletonLoader className="h-5 w-3/4 rounded mb-1.5" />
+      <SkeletonLoader className="h-3 w-1/4 rounded" />
+    </CardHeader>
+    <CardContent>
+      <SkeletonLoader className="h-3 w-full rounded mb-1" />
+      <SkeletonLoader className="h-3 w-full rounded mb-1" />
+      <SkeletonLoader className="h-3 w-2/3 rounded" />
+    </CardContent>
+    <CardFooter className="pt-3 mt-3 border-t border-border justify-end">
+      <SkeletonLoader className="h-8 w-24 rounded-md" />
+    </CardFooter>
+  </Card>
+);
+
+
+// Enhanced PrayerRequest Card
+const PrayerRequestCard = ({ item, onPrayPress, currentUserId, onMarkAnswered }: {
+  item: PrayerRequest,
+  onPrayPress: (id: string, isPraying: boolean) => void,
+  currentUserId: string | null,
+  onMarkAnswered: (id: string) => void,
+}) => {
+  const { colorScheme } = useColorScheme();
+  const colors = Colors[colorScheme ?? 'light'];
   const requestDate = new Date(item.created_at);
   const dateString = requestDate.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
   const isPraying = item.praying_users?.includes(currentUserId ?? '') ?? false;
   const isAuthor = item.user_id === currentUserId;
 
   return (
-    <View className="bg-light-card dark:bg-dark-card p-4 mb-3 rounded-lg shadow-sm border border-light-cardBorder dark:border-dark-cardBorder">
-      <View className="flex-row justify-between items-start mb-2">
+    <Card className="mb-4">
+      <CardHeader className="flex-row justify-between items-start pb-2">
         <View className="flex-1 mr-2">
-          {item.is_anonymous ? (
-            <Text className="text-base font-semibold text-light-text dark:text-dark-text">Anonymous Request</Text>
-          ) : (
-            <Text className="text-base font-semibold text-light-text dark:text-dark-text">
-              {item.user?.first_name} {item.user?.last_name}
-            </Text>
-          )}
-          <Text className="text-xs text-gray-500 dark:text-gray-400">{dateString}</Text>
-          {item.camp_name && <Text className="text-xs text-gray-500 dark:text-gray-400 mt-1">Camp: {item.camp_name}</Text>}
+          <CardTitle className="text-base">
+            {item.is_anonymous ? 'Anonymous Request' : `${item.user?.first_name} ${item.user?.last_name}`}
+          </CardTitle>
+          <CardDescription className="text-xs mt-0.5">
+            {dateString} {item.camp_name ? `• Camp: ${item.camp_name}` : ''}
+          </CardDescription>
         </View>
         {item.status === 'answered' && (
-          <View className="bg-green-100 dark:bg-green-800 px-2 py-0.5 rounded-full">
-            <Text className="text-xs font-medium text-green-700 dark:text-green-200">Answered</Text>
+          <View className="bg-green-100 dark:bg-green-900/50 px-2.5 py-1 rounded-full">
+            <Text className="text-xs font-medium text-green-700 dark:text-green-300">Answered</Text>
           </View>
         )}
-      </View>
+      </CardHeader>
 
-      <Text className="text-light-text dark:text-dark-text mb-3">{item.content}</Text>
+      <CardContent className="py-2">
+        <Text className="text-foreground text-sm leading-relaxed">{item.content}</Text>
+      </CardContent>
 
       {item.status === 'answered' && item.testimony_content && (
-        <View className="border-t border-light-cardBorder dark:border-dark-cardBorder pt-2 mt-2">
-          <Text className="text-sm font-semibold text-light-text dark:text-dark-text mb-1">Testimony:</Text>
-          <Text className="text-sm text-gray-700 dark:text-gray-300">{item.testimony_content}</Text>
+        <View className="border-t border-border pt-3 mt-3">
+          <Text className="text-sm font-semibold text-accent mb-1">Testimony:</Text>
+          <Text className="text-sm text-muted-foreground italic">{item.testimony_content}</Text>
         </View>
       )}
 
-      {item.status === 'active' && !isAuthor && (
-        <View className="flex-row justify-end items-center mt-2 border-t border-light-cardBorder dark:border-dark-cardBorder pt-2">
-          <TouchableOpacity
-            onPress={() => onPrayPress(item._id, isPraying)}
-            className={`flex-row items-center px-3 py-1 rounded-md ${isPraying ? 'bg-light-primary/20 dark:bg-dark-primary/30' : 'bg-gray-200 dark:bg-gray-600'}`}
-          >
-            <Ionicons name={isPraying ? "checkmark-circle" : "heart-outline"} size={18} color={isPraying ? colors.primary : colors.text} />
-            <Text className={`ml-1.5 text-sm font-medium ${isPraying ? 'text-light-primary dark:text-dark-primary' : 'text-light-text dark:text-dark-text'}`}>
-              {isPraying ? 'Praying' : 'Pray'}
-            </Text>
-          </TouchableOpacity>
-          <Text className="text-xs text-gray-500 dark:text-gray-400 ml-3">{item.praying_users?.length || 0} Praying</Text>
-        </View>
+      {item.status === 'active' && (
+        <CardFooter className="pt-3 mt-3 border-t border-border flex-row justify-between items-center">
+          <Text className="text-xs text-muted-foreground">{item.praying_users?.length || 0} Praying</Text>
+          {isAuthor ? (
+            <Button
+              title="Mark Answered"
+              onPress={() => onMarkAnswered(item._id)}
+              variant="outline"
+              size="sm"
+              iconLeft='checkmark-circle-outline'
+            />
+          ) : (
+            <Button
+              title={isPraying ? 'Praying' : 'Pray'}
+              onPress={() => onPrayPress(item._id, isPraying)}
+              variant={isPraying ? 'secondary' : 'default'}
+              size="sm"
+              iconLeft={isPraying ? "checkmark-done-outline" : "heart-outline"}
+            />
+          )}
+        </CardFooter>
       )}
-      {item.status === 'active' && isAuthor && (
-        <View className="flex-row justify-end items-center mt-2 border-t border-light-cardBorder dark:border-dark-cardBorder pt-2">
-          <Text className="text-xs text-gray-500 dark:text-gray-400">{item.praying_users?.length || 0} Praying</Text>
-          {/* TODO: Add 'Mark as Answered' button */}
-        </View>
-      )}
-    </View>
+    </Card>
   );
 };
 
 
 export default function PrayerScreen() {
-  const [requests, setRequests] = useState<PrayerRequest[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<'active' | 'answered' | 'personal'>('active');
-  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { authState } = useAuth();
-  const { colorScheme: nwColorScheme } = useColorScheme();
-  const colorScheme = nwColorScheme ?? 'light';
-  const colors = Colors[colorScheme];
+  const { colorScheme } = useColorScheme();
+  const colors = Colors[colorScheme ?? 'light'];
+  const currentUserId = authState.currentUser?._id ?? null;
 
-  const fetchRequests = useCallback(async (currentFilter: typeof filter) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params: Record<string, any> = {};
-      if (currentFilter === 'active') {
-        params.status = 'active';
-      } else if (currentFilter === 'answered') {
-        params.status = 'answered'; // Or is_testimony=true depending on backend
-      } else if (currentFilter === 'personal') {
-        params.personal = 'true';
-      }
+  // Fetching logic
+  const { data: prayerData, isLoading, error, isFetching, refetch } = useQuery({
+    queryKey: [PRAYER_QUERY_KEY, filter, currentUserId], // Include user ID for personal filter
+    queryFn: () => {
+      const params: GetPrayerRequestsParams = { per_page: 15 };
+      if (filter === 'active') params.status = 'active';
+      else if (filter === 'answered') params.status = 'answered';
+      else if (filter === 'personal') params.personal = 'true';
+      return getPrayerRequests(params);
+    },
+    staleTime: 2 * 60 * 1000, // 2 minutes
+  });
 
-      // TODO: Implement pagination
-      const response = await getPrayerRequests(params);
-      setRequests(response.prayer_requests);
-    } catch (err: any) {
-      console.error("Failed to fetch prayer requests:", err);
-      setError(err.message || 'Failed to load prayer requests.');
-      setRequests([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchRequests(filter);
-  }, [fetchRequests, filter]);
-
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    fetchRequests(filter);
-  }, [fetchRequests, filter]);
-
-  const handlePrayPress = async (id: string, isCurrentlyPraying: boolean) => {
-    // Optimistic UI Update
-    setRequests(prevRequests =>
-      prevRequests.map(req => {
-        if (req._id === id) {
-          const currentUserId = authState.currentUser?._id;
-          let newPrayingUsers = [...(req.praying_users || [])];
-          if (isCurrentlyPraying) {
-            newPrayingUsers = newPrayingUsers.filter(userId => userId !== currentUserId);
-          } else if (currentUserId && !newPrayingUsers.includes(currentUserId)) {
-            newPrayingUsers.push(currentUserId);
-          }
-          return { ...req, praying_users: newPrayingUsers, is_praying: !isCurrentlyPraying };
-        }
-        return req;
-      })
-    );
-
-    try {
-      await prayForRequest(id, !isCurrentlyPraying); // Send request to backend
-      // Optional: Refetch data after success if optimistic update isn't enough
-      // fetchRequests(filter);
-    } catch (error) {
-      console.error('Failed to update prayer status:', error);
-      Alert.alert('Error', 'Could not update prayer status.');
-      // Revert Optimistic UI Update on failure
-      setRequests(prevRequests =>
-        prevRequests.map(req => {
-          if (req._id === id) {
-            const currentUserId = authState.currentUser?._id;
-            let originalPrayingUsers = [...(req.praying_users || [])];
-            // This revert logic needs careful handling if multiple users are involved
-            // Simplified revert:
-            if (!isCurrentlyPraying) { // If we added them optimistically, remove
-              originalPrayingUsers = originalPrayingUsers.filter(userId => userId !== currentUserId);
-            } else if (currentUserId) { // If we removed them optimistically, add back
-              originalPrayingUsers.push(currentUserId);
+  // Mutation for praying/unpraying
+  const prayMutation = useMutation({
+    mutationFn: ({ requestId, pray }: { requestId: string; pray: boolean }) => prayForRequest(requestId, pray),
+    onMutate: async ({ requestId, pray }) => {
+      // Cancel any outgoing refetches
+      await queryClient.cancelQueries({ queryKey: [PRAYER_QUERY_KEY, filter, currentUserId] });
+      // Snapshot previous value
+      const previousData = queryClient.getQueryData<PrayerRequestsResponse>([PRAYER_QUERY_KEY, filter, currentUserId]);
+      // Optimistically update
+      queryClient.setQueryData<PrayerRequestsResponse>([PRAYER_QUERY_KEY, filter, currentUserId], (oldData) => {
+        if (!oldData) return oldData;
+        return {
+          ...oldData,
+          prayer_requests: oldData.prayer_requests.map(req => {
+            if (req._id === requestId && currentUserId) {
+              const prayingUsers = req.praying_users || [];
+              const newPrayingUsers = pray
+                ? [...prayingUsers, currentUserId]
+                : prayingUsers.filter(id => id !== currentUserId);
+              return { ...req, praying_users: newPrayingUsers };
             }
-            return { ...req, praying_users: originalPrayingUsers, is_praying: isCurrentlyPraying };
-          }
-          return req;
-        })
-      );
-    }
+            return req;
+          }),
+        };
+      });
+      return { previousData }; // Return context with snapshot
+    },
+    onError: (err, variables, context) => {
+      console.error("Prayer mutation error:", err);
+      Alert.alert('Error', 'Could not update prayer status.');
+      // Rollback on error
+      if (context?.previousData) {
+        queryClient.setQueryData([PRAYER_QUERY_KEY, filter, currentUserId], context.previousData);
+      }
+    },
+    onSettled: () => {
+      // Always refetch after error or success
+      queryClient.invalidateQueries({ queryKey: [PRAYER_QUERY_KEY, filter, currentUserId] });
+    },
+  });
+
+  const handlePrayPress = (id: string, isCurrentlyPraying: boolean) => {
+    prayMutation.mutate({ requestId: id, pray: !isCurrentlyPraying });
+  };
+
+  const handleMarkAnswered = (id: string) => {
+    // TODO: Implement mutation/logic to mark as answered (likely involves adding testimony)
+    Alert.alert("Mark as Answered", "Functionality to add testimony and mark as answered coming soon!");
   };
 
   const handleAddRequest = () => {
-    // router.push('/prayer/new'); // Navigate to a create prayer request screen
     Alert.alert("Feature", "Add prayer request functionality coming soon!");
   };
 
+  const onRefresh = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: [PRAYER_QUERY_KEY, filter, currentUserId] });
+  }, [queryClient, filter, currentUserId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refetch();
+    }, [refetch])
+  );
+
   const renderFilterButtons = () => (
-    <View className="flex-row justify-around mb-4 px-2">
-      <Button
-        title="Active"
-        onPress={() => setFilter('active')}
-        variant={filter === 'active' ? 'default' : 'outline'}
-        size="sm"
-        className="flex-1 mx-1"
-      />
-      <Button
-        title="Answered"
-        onPress={() => setFilter('answered')}
-        variant={filter === 'answered' ? 'default' : 'outline'}
-        size="sm"
-        className="flex-1 mx-1"
-      />
-      <Button
-        title="My Requests"
-        onPress={() => setFilter('personal')}
-        variant={filter === 'personal' ? 'default' : 'outline'}
-        size="sm"
-        className="flex-1 mx-1"
-      />
+    <View className="flex-row justify-center mb-4 px-4 gap-x-2">
+      <Button title="Active" onPress={() => setFilter('active')} variant={filter === 'active' ? 'secondary' : 'ghost'} size="sm" className="flex-1" />
+      <Button title="Answered" onPress={() => setFilter('answered')} variant={filter === 'answered' ? 'secondary' : 'ghost'} size="sm" className="flex-1" />
+      <Button title="My Requests" onPress={() => setFilter('personal')} variant={filter === 'personal' ? 'secondary' : 'ghost'} size="sm" className="flex-1" />
     </View>
   );
 
+  const renderContent = () => {
+    if (isLoading && !prayerData) {
+      return <View className="flex-1 px-4">{[...Array(5)].map((_, index) => <PrayerCardSkeleton key={index} />)}</View>;
+    }
+    if (error) {
+      return (
+        <View className="flex-1 justify-center items-center px-6">
+          <Ionicons name="cloud-offline-outline" size={48} color={colors.destructive} className="mb-4" />
+          <Text className="text-center text-lg text-destructive mb-4">Failed to load prayer requests.</Text>
+          <Text className="text-center text-sm text-muted-foreground mb-6">{error.message}</Text>
+          <Button title="Retry" onPress={() => refetch()} iconLeft="refresh-outline" variant="secondary" />
+        </View>
+      );
+    }
+    if (!prayerData?.prayer_requests?.length) {
+      return (
+        <View className="flex-1 justify-center items-center px-6">
+          <Ionicons name="heart-outline" size={48} color={colors.mutedForeground} className="mb-4" />
+          <Text className="text-lg text-muted-foreground">No requests found for this filter.</Text>
+          {filter === 'active' && <Text className="text-sm text-muted-foreground mt-2">Share a request to get started!</Text>}
+        </View>
+      );
+    }
+
+    return (
+      <FlatList
+        data={prayerData.prayer_requests}
+        renderItem={({ item }) => (
+          <PrayerRequestCard
+            item={item}
+            onPrayPress={handlePrayPress}
+            currentUserId={currentUserId}
+            onMarkAnswered={handleMarkAnswered}
+          />
+        )}
+        keyExtractor={(item) => item._id}
+        refreshControl={
+          <RefreshControl refreshing={isFetching && !isLoading} onRefresh={onRefresh} tintColor={colors.primary} />
+        }
+        contentContainerClassName="px-4 pb-4"
+      />
+    );
+  }
 
   return (
-    <SafeAreaView className="flex-1 bg-light-background dark:bg-dark-background">
+    <SafeAreaWrapper className="flex-1 bg-background">
       <Stack.Screen
         options={{
           title: 'Prayer Wall',
-          headerShown: true,
+          headerLargeTitle: true,
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: colors.background },
+          headerTitleStyle: { color: colors.text },
           headerRight: () => (
-            <TouchableOpacity onPress={handleAddRequest} style={{ marginRight: 15 }}>
-              <Ionicons name="add-circle-outline" size={28} color={colors.tint} />
+            <TouchableOpacity onPress={handleAddRequest} className="mr-3">
+              <Ionicons name="add-circle" size={28} color={colors.primary} />
             </TouchableOpacity>
           ),
         }}
       />
-
       {renderFilterButtons()}
-
-      <View className="flex-1 px-4">
-        {loading && !refreshing ? (
-          <ActivityIndicator size="large" color={colors.tint} className="mt-10" />
-        ) : error ? (
-          <View className="items-center justify-center mt-10">
-            <Text className="text-destructive dark:text-destructive-dark">{error}</Text>
-            <TouchableOpacity onPress={() => fetchRequests(filter)} className="mt-2 p-2 bg-light-primary dark:bg-dark-primary rounded">
-              <Text className="text-white">Retry</Text>
-            </TouchableOpacity>
-          </View>
-        ) : requests.length === 0 ? (
-          <View className="items-center justify-center flex-1">
-            <Text className="text-gray-500 dark:text-gray-400">No prayer requests found for this filter.</Text>
-          </View>
-        ) : (
-          <FlatList
-            data={requests}
-            renderItem={({ item }) => (
-              <PrayerRequestCard
-                item={item}
-                onPrayPress={handlePrayPress}
-                currentUserId={authState.currentUser?._id ?? null}
-              />
-            )}
-            keyExtractor={(item) => item._id}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.tint} />
-            }
-          />
-        )}
-      </View>
-    </SafeAreaView>
+      {renderContent()}
+    </SafeAreaWrapper>
   );
 }
