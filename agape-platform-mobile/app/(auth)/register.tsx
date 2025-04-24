@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { View, Alert, ActivityIndicator, TouchableOpacity, Text } from 'react-native';
+import { View, Text, ActivityIndicator, TouchableOpacity, Alert, Image, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { Link, useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import Input from '@/components/Input';
 import Button from '@/components/Button';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { RegisterData } from '@/types';
+import SafeAreaWrapper from '@/components/SafeAreaWrapper';
 
 export default function RegisterScreen() {
   const [firstName, setFirstName] = useState('');
@@ -13,35 +13,39 @@ export default function RegisterScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  // Add state for phone, camp_id if needed during registration
   const [loading, setLoading] = useState(false);
   const { register } = useAuth();
   const router = useRouter();
 
-  console.log('RegisterScreen')
   const handleRegister = async () => {
     if (!firstName || !lastName || !email || !password || !confirmPassword) {
-      Alert.alert('Error', 'Please fill in all required fields.');
+      Alert.alert('Missing Information', 'Please fill in all required fields.');
       return;
     }
     if (password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match.');
+      Alert.alert('Password Mismatch', 'Passwords do not match.');
       return;
     }
-    // Add password strength validation if needed
+    // Basic password strength check (example)
+    if (password.length < 8) {
+      Alert.alert('Weak Password', 'Password must be at least 8 characters long.');
+      return;
+    }
 
     setLoading(true);
     try {
       const registerData: RegisterData = {
-        first_name: firstName,
-        last_name: lastName,
-        email: email,
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+        email: email.trim(),
         password: password,
-        // Add optional fields like phone, camp_id here if collected
       };
       await register(registerData);
-      Alert.alert('Registration Successful', 'Please log in with your new account.');
-      router.replace('/(auth)/login'); // Go to login screen after successful registration
+      Alert.alert(
+        'Registration Successful',
+        'Your account has been created. Please log in.',
+        [{ text: 'OK', onPress: () => router.replace('/(auth)/login') }] // Redirect on OK
+      );
     } catch (error: any) {
       Alert.alert('Registration Failed', error.message || 'An unknown error occurred.');
     } finally {
@@ -50,63 +54,89 @@ export default function RegisterScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-light-background dark:bg-dark-background justify-center p-6">
-      <View className="mb-8 items-center">
-        <Text className="text-4xl font-bold text-light-primary dark:text-dark-primary mb-2">Agape</Text>
-        <Text className="text-lg text-light-text dark:text-dark-text">Create Your Account</Text>
-      </View>
+    <SafeAreaWrapper className="flex-1 bg-background">
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        className="flex-1"
+      >
+        <ScrollView
+          contentContainerClassName="flex-grow justify-center p-6"
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Header Section */}
+          <View className="items-center mb-8">
+            <Image
+              source={require('@/assets/images/icon.png')} // Assuming icon exists
+              className="w-20 h-20 mb-3"
+              resizeMode="contain"
+            />
+            <Text className="text-3xl font-bold text-primary mb-1">Create Account</Text>
+            <Text className="text-base text-muted-foreground">Join the Agape Platform</Text>
+          </View>
 
-      <Input
-        placeholder="First Name"
-        value={firstName}
-        onChangeText={setFirstName}
-        className="mb-4"
-      />
-      <Input
-        placeholder="Last Name"
-        value={lastName}
-        onChangeText={setLastName}
-        className="mb-4"
-      />
-      <Input
-        placeholder="Email"
-        value={email}
-        onChangeText={setEmail}
-        keyboardType="email-address"
-        autoCapitalize="none"
-        className="mb-4"
-      />
-      <Input
-        placeholder="Password"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-        className="mb-4"
-      />
-      <Input
-        placeholder="Confirm Password"
-        value={confirmPassword}
-        onChangeText={setConfirmPassword}
-        secureTextEntry
-        className="mb-6"
-      />
+          {/* Form Section */}
+          <View className="w-full">
+            <View className="flex-row justify-between mb-4">
+              <Input
+                placeholder="First Name"
+                value={firstName}
+                onChangeText={setFirstName}
+                iconLeft="person-outline"
+                containerClassName="flex-1 mr-2" // Adjusted spacing
+              />
+              <Input
+                placeholder="Last Name"
+                value={lastName}
+                onChangeText={setLastName}
+                containerClassName="flex-1 ml-2" // Adjusted spacing
+              />
+            </View>
+            <Input
+              placeholder="Email Address"
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              iconLeft="mail-outline"
+              containerClassName="mb-4"
+            />
+            <Input
+              placeholder="Password (min 8 chars)"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              iconLeft="lock-closed-outline"
+              containerClassName="mb-4"
+            />
+            <Input
+              placeholder="Confirm Password"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              secureTextEntry
+              iconLeft="lock-closed-outline"
+              containerClassName="mb-6"
+            />
 
-      {/* Add optional fields like Phone, Camp Selection if needed */}
+            <Button
+              title="Register"
+              onPress={handleRegister}
+              isLoading={loading}
+              disabled={loading}
+              className="w-full"
+            />
+          </View>
 
-      {loading ? (
-        <ActivityIndicator size="large" color="#A0522D" />
-      ) : (
-        <Button onPress={handleRegister} title="Register" />
-      )}
-
-      <View className="flex-row justify-center mt-6">
-        <Text className="text-light-text dark:text-dark-text">Already have an account? </Text>
-        <Link href="/(auth)/login" asChild>
-          <TouchableOpacity>
-            <Text className="text-light-primary dark:text-dark-primary font-semibold">Log In</Text>
-          </TouchableOpacity>
-        </Link>
-      </View>
-    </SafeAreaView>
+          {/* Login Link */}
+          <View className="flex-row justify-center mt-6">
+            <Text className="text-muted-foreground">Already have an account? </Text>
+            <Link href="/(auth)/login" asChild>
+              <TouchableOpacity>
+                <Text className="text-primary font-semibold">Log In</Text>
+              </TouchableOpacity>
+            </Link>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaWrapper>
   );
 }

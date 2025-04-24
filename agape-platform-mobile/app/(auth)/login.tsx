@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { View, Alert, ActivityIndicator, TouchableOpacity, Text } from 'react-native';
+import { View, Text, ActivityIndicator, TouchableOpacity, Alert, Image, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { Link, useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
-import Input from '@/components/Input'; // Assuming creation
-import Button from '@/components/Button'; // Assuming creation
-import { SafeAreaView } from 'react-native-safe-area-context'; // Use safe area
+import Input from '@/components/Input';
+import Button from '@/components/Button';
+import SafeAreaWrapper from '@/components/SafeAreaWrapper'; // Use SafeAreaWrapper
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -12,7 +12,6 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const router = useRouter();
-  console.log('Loading login screen...');
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -22,8 +21,7 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       await login({ email, password });
-      // Navigation will be handled by the RootLayout/Index based on auth state change
-      // router.replace('/(tabs)/home'); // Usually not needed here if root layout handles it
+      // Root layout handles navigation
     } catch (error: any) {
       Alert.alert('Login Failed', error.message || 'An unknown error occurred.');
     } finally {
@@ -32,49 +30,72 @@ export default function LoginScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-light-background dark:bg-dark-background justify-center p-6">
-      <View className="mb-10 items-center">
-        {/* Replace with your Logo Component */}
-        <Text className="text-4xl font-bold text-light-primary dark:text-dark-primary mb-2">Agape</Text>
-        <Text className="text-lg text-light-text dark:text-dark-text">Welcome Back</Text>
-      </View>
+    <SafeAreaWrapper className="flex-1 bg-background">
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        className="flex-1"
+      >
+        <ScrollView
+          contentContainerClassName="flex-grow justify-center p-6" // Use flex-grow for centering
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Logo Section */}
+          <View className="items-center mb-10">
+            {/* Replace with actual logo */}
+            <Image
+              source={require('@/assets/images/icon.png')} // Assuming icon exists
+              className="w-24 h-24 mb-4"
+              resizeMode="contain"
+            />
+            <Text className="text-3xl font-bold text-primary mb-1">Agape Platform</Text>
+            <Text className="text-lg text-muted-foreground">Welcome Back</Text>
+          </View>
 
-      <Input
-        placeholder="Email"
-        value={email}
-        onChangeText={setEmail}
-        keyboardType="email-address"
-        autoCapitalize="none"
-        className="mb-4" // Add styling via className
-      />
-      <Input
-        placeholder="Password"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-        className="mb-6" // Add styling via className
-      />
+          {/* Form Section */}
+          <View className="w-full">
+            <Input
+              placeholder="Email Address"
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              iconLeft="mail-outline" // Example icon
+              containerClassName="mb-4"
+            />
+            <Input
+              placeholder="Password"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              iconLeft="lock-closed-outline" // Example icon
+              containerClassName="mb-6"
+            />
 
-      {loading ? (
-        <ActivityIndicator size="large" color="#A0522D" /> // Use theme color
-      ) : (
-        <Button onPress={handleLogin} title="Login" />
-      )}
+            <Button
+              title="Login"
+              onPress={handleLogin}
+              isLoading={loading}
+              disabled={loading}
+              className="w-full" // Make button full width
+            />
+          </View>
 
-      <View className="flex-row justify-center mt-6">
-        <Text className="text-light-text dark:text-dark-text">Don't have an account? </Text>
-        <Link href="/(auth)/register" asChild>
-          <TouchableOpacity>
-            <Text className="text-light-primary dark:text-dark-primary font-semibold">Sign Up</Text>
-          </TouchableOpacity>
-        </Link>
-      </View>
-      {/* Add Forgot Password Link */}
-      <View className="items-center mt-4">
-        <TouchableOpacity onPress={() => {/* Implement forgot password */ }}>
-          <Text className="text-sm text-gray-500 dark:text-gray-400">Forgot Password?</Text>
-        </TouchableOpacity>
-      </View>
-    </SafeAreaView>
+          {/* Links Section */}
+          <View className="items-center mt-6">
+            <View className="flex-row justify-center mb-3">
+              <Text className="text-muted-foreground">Don't have an account? </Text>
+              <Link href="/(auth)/register" asChild>
+                <TouchableOpacity>
+                  <Text className="text-primary font-semibold">Sign Up</Text>
+                </TouchableOpacity>
+              </Link>
+            </View>
+            <TouchableOpacity onPress={() => {/* TODO: Implement forgot password */ }}>
+              <Text className="text-sm text-muted-foreground">Forgot Password?</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaWrapper>
   );
 }
