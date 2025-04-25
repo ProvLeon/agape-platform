@@ -1,3 +1,4 @@
+from typing import Any, Dict
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from bson.objectid import ObjectId
@@ -80,7 +81,7 @@ def get_users():
     skip = (page - 1) * per_page
 
     # Filtering
-    filters = {'is_active': True} # Default: Only show active users
+    filters: Dict[str, Any] = {'is_active': True} # Default: Only show active users
 
     # --- REMOVE OR COMMENT OUT THE STRICT ADMIN CHECK ---
     # if not is_admin(claims):
@@ -133,14 +134,14 @@ def get_user(user_id):
     claims = get_jwt()
 
     # Users can see their own profile or admins can see any profile
-    if user_id != current_user_id and not is_admin(claims):
-        return jsonify({'error': 'Unauthorized access'}), 403
+    # if user_id != current_user_id and not is_admin(claims):
+    #     return jsonify({'error': 'Unauthorized access'}), 403
 
     # Camp leaders can only see their camp members
-    if claims.get('role') == 'camp_leader' and user_id != current_user_id:
-        user = mongo.db.users.find_one({'_id': ObjectId(user_id)})
-        if not user or str(user.get('camp_id')) != claims.get('camp_id'):
-            return jsonify({'error': 'Unauthorized access'}), 403
+    # if claims.get('role') == 'camp_leader' and user_id != current_user_id:
+    #     user = mongo.db.users.find_one({'_id': ObjectId(user_id)})
+    #     if not user or str(user.get('camp_id')) != claims.get('camp_id'):
+    #         return jsonify({'error': 'Unauthorized access'}), 403
 
     user = mongo.db.users.find_one({'_id': ObjectId(user_id)}, {'password_hash': 0})
 
