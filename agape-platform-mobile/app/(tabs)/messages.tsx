@@ -164,8 +164,8 @@ export default function MessagesScreen() {
   // --- NEW CHAT HANDLER ---
   const handleNewMessage = () => {
     // TODO: Replace with navigation to a contact selection screen
-    // router.push('/messages/new');
-    Alert.alert("New Chat", "Select a contact screen coming soon!");
+    router.push('/message/new');
+    // Alert.alert("New Chat", "Select a contact screen coming soon!");
   };
 
   const renderContent = () => {

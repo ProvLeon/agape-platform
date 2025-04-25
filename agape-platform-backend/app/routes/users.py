@@ -13,9 +13,9 @@ users_bp = Blueprint('users', __name__)
 def is_admin(claims):
     return claims.get('role') in ['super_admin', 'camp_leader']
 
-@users_bp.route('/', methods=['GET'])
-@jwt_required()
-def get_users():
+# @users_bp.route('/', methods=['GET'])
+# @jwt_required()
+# def get_users():
     claims = get_jwt()
 
     # Only admins can see all users
@@ -63,6 +63,63 @@ def get_users():
 
     return jsonify({
         'users': users,
+        'total': total,
+        'page': page,
+        'per_page': per_page,
+        'pages': (total + per_page - 1) // per_page
+    }), 200
+
+@users_bp.route('/', methods=['GET'])
+@jwt_required() # Ensures user is logged in
+def get_users():
+    # claims = get_jwt() # Keep claims if needed for other filtering later
+
+    # Pagination parameters (keep as is)
+    page = int(request.args.get('page', 1))
+    per_page = int(request.args.get('per_page', 20))
+    skip = (page - 1) * per_page
+
+    # Filtering
+    filters = {'is_active': True} # Default: Only show active users
+
+    # --- REMOVE OR COMMENT OUT THE STRICT ADMIN CHECK ---
+    # if not is_admin(claims):
+    #     return jsonify({'error': 'Unauthorized access'}), 403
+    # -----------------------------------------------------
+
+    # Optional: Add search filter (keep as is)
+    if 'search' in request.args:
+        search = request.args['search']
+        filters['$or'] = [
+            {'first_name': {'$regex': search, '$options': 'i'}},
+            {'last_name': {'$regex': search, '$options': 'i'}},
+            {'email': {'$regex': search, '$options': 'i'}}
+        ]
+
+    # Optional: Add filtering based on role if needed later
+    # if claims.get('role') == 'member':
+    #     filters['role'] = {'$ne': 'super_admin'} # Example: Don't show admins to members
+
+    # Execute query (keep as is)
+    total = mongo.db.users.count_documents(filters)
+    users_cursor = mongo.db.users.find(
+        filters,
+        {'password_hash': 0}
+    ).sort([('last_name', 1), ('first_name', 1)]).skip(skip).limit(per_page) # Added sort
+
+    # Process results (keep as is)
+    users = []
+    for user in users_cursor:
+        user['_id'] = str(user['_id'])
+        if 'camp_id' in user and user['camp_id']:
+            user['camp_id'] = str(user['camp_id'])
+        # Exclude self from list if needed (can also be done on frontend)
+        # if str(user['_id']) == get_jwt_identity():
+        #     continue
+        users.append(user)
+
+    return jsonify({
+        'items': users, # Changed key to 'items' to match frontend expectation
         'total': total,
         'page': page,
         'per_page': per_page,

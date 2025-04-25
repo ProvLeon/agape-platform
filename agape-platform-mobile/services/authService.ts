@@ -67,4 +67,25 @@ export const changePassword = async (passwordData: { current_password: string, n
 };
 
 
-// Add other auth-related API calls (e.g., forgot password, reset password) if needed
+export const forgotPassword = async (data: { email: string }): Promise<{ message: string }> => {
+  try {
+    const response = await api.post<{ message: string }>('/auth/forgot-password', data);
+    return response.data;
+  } catch (error: any) {
+    console.error('Forgot password request failed:', error.response?.data || error.message);
+    // Don't throw specific backend errors to avoid email enumeration
+    throw new Error('If an account exists, an email will be sent.');
+  }
+};
+
+export const resetPassword = async (data: { token: string, new_password: string }): Promise<{ message: string }> => {
+  try {
+    // Backend expects token in query/param usually, or sometimes body. Adjust as needed.
+    // Example assumes backend takes token in body for simplicity here:
+    const response = await api.post<{ message: string }>('/auth/reset-password', data);
+    return response.data;
+  } catch (error: any) {
+    console.error('Reset password failed:', error.response?.data || error.message);
+    throw new Error(error.response?.data?.error || 'Password reset failed. Link may be invalid or expired.');
+  }
+};
