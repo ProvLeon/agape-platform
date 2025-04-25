@@ -77,13 +77,22 @@ def get_readable_time_diff(dt):
 
 from typing import Dict, List, Union, Any
 
-def serialize_objectid(obj: Union[Dict, List, ObjectId, Any]) -> Union[Dict, List, str, Any]:
-    """Convert ObjectId to string in nested dictionary or list"""
+def serialize_document(obj: Union[Dict, List, ObjectId, datetime, Any]) -> Union[Dict, List, str, Any]:
+    """Recursively convert ObjectId and datetime objects in nested dictionary or list"""
     if isinstance(obj, dict):
-        return {k: serialize_objectid(v) for k, v in obj.items()}
+        return {k: serialize_document(v) for k, v in obj.items()}
     elif isinstance(obj, list):
-        return [serialize_objectid(item) for item in obj]
+        return [serialize_document(item) for item in obj]
     elif isinstance(obj, ObjectId):
         return str(obj)
+    # *** ADD DATETIME HANDLING ***
+    elif isinstance(obj, datetime):
+        # Ensure it's timezone-aware (UTC) before formatting if needed,
+        # although MongoDB usually stores in UTC.
+        # If it might be naive:
+        # if obj.tzinfo is None:
+        #     obj = obj.replace(tzinfo=timezone.utc)
+        # Return as ISO 8601 string with Z for UTC
+        return obj.isoformat(timespec='milliseconds') + 'Z'
     else:
         return obj

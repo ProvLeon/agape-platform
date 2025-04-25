@@ -38,6 +38,7 @@ const MessageBubble = React.memo(({ message, isSender, showSenderName }: {
   // Function to format time
   const formatTime = (dateString: string) => {
     try {
+      console.log(dateString)
       return new Date(dateString).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     } catch (e) {
       return '...'; // Fallback for invalid date/temp ID

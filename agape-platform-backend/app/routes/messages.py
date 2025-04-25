@@ -8,7 +8,7 @@ import os
 
 from app import mongo
 from app.config import app_config
-from app.utils.helpers import serialize_objectid # Use the helper
+from app.utils.helpers import serialize_document # Use the helper
 
 
 messages_bp = Blueprint('messages', __name__)
@@ -198,13 +198,13 @@ def get_messages():
                     {'_id': ObjectId(uid_str)},
                     {'first_name': 1, 'last_name': 1, 'profile_image': 1}
                 )
-                user_cache[uid_str] = serialize_objectid(details) if details else None
+                user_cache[uid_str] = serialize_document(details) if details else None
                 return user_cache[uid_str]
             except InvalidId:
                 return None
 
         for msg_doc in messages_cursor:
-            serialized_msg_data= serialize_objectid(msg_doc)
+            serialized_msg_data= serialize_document(msg_doc)
 
             if not isinstance(serialized_msg_data, dict):
                 # Should not happen if coming from MongoDB, but good practice
