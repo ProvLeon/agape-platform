@@ -1,11 +1,15 @@
+import traceback
+from typing import Any, Dict, List, cast
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
-from bson.objectid import ObjectId
+from bson.objectid import ObjectId, InvalidId # Import InvalidId for error handling
 from datetime import datetime, timezone
 import os
 
 from app import mongo
 from app.config import app_config
+from app.utils.helpers import serialize_objectid # Use the helper
+
 
 messages_bp = Blueprint('messages', __name__)
 
@@ -81,103 +85,161 @@ def create_message():
 @messages_bp.route('/', methods=['GET'])
 @jwt_required()
 def get_messages():
-    user_id = get_jwt_identity()
-    claims = get_jwt()
+    try: # Wrap the whole route in a try...except
+        user_id_str = get_jwt_identity()
+        claims = get_jwt()
+        user_role = claims.get('role', 'member')
+        user_camp_id_str = claims.get('camp_id')
 
-    # Determine which messages the user can access
-    filters = {'is_deleted': False}
-
-    # Message type filters
-    message_type = request.args.get('type')
-    if message_type == 'ministry':
-        filters['recipient_type'] = 'ministry'
-    elif message_type == 'camp':
-        # Get user's camp
-        user = mongo.db.users.find_one({'_id': ObjectId(user_id)})
-        if not user or not user.get('camp_id'):
-            return jsonify({'error': 'User not assigned to any camp'}), 400
-
-        filters['recipient_type'] = 'camp'
-        filters['recipient_id'] = user['camp_id']
-    elif message_type == 'personal':
-        filters['$or'] = [
-            {'recipient_type': 'user', 'recipient_id': ObjectId(user_id)},
-            {'recipient_type': 'user', 'sender_id': ObjectId(user_id)}
-        ]
-    elif message_type == 'sent':
-        filters['sender_id'] = ObjectId(user_id)
-
-    # Optional filtering by conversation partner for personal messages
-    if message_type == 'personal' and 'partner_id' in request.args:
-        partner_id = ObjectId(request.args['partner_id'])
-        filters['$or'] = [
-            {'recipient_type': 'user', 'recipient_id': ObjectId(user_id), 'sender_id': partner_id},
-            {'recipient_type': 'user', 'recipient_id': partner_id, 'sender_id': ObjectId(user_id)}
-        ]
-
-    # Announcement filter
-    if 'announcements_only' in request.args and request.args['announcements_only'].lower() == 'true':
-        filters['is_announcement'] = True
-
-    # Date range filtering
-    if 'from_date' in request.args:
         try:
-            from_date = datetime.fromisoformat(request.args['from_date'])
-            filters['created_at'] = {'$gte': from_date}
-        except ValueError:
-            pass
+            user_id = ObjectId(user_id_str)
+            user_camp_id = ObjectId(user_camp_id_str) if user_camp_id_str else None
+        except InvalidId:
+            return jsonify({'error': 'Invalid user or camp ID format in token'}), 400
 
-    if 'to_date' in request.args:
-        try:
-            to_date = datetime.fromisoformat(request.args['to_date'])
-            if 'created_at' in filters:
-                filters['created_at']['$lte'] = to_date
+        # --- Fetch Current User Once ---
+        # Needed to determine camp membership for filtering if not in claims reliably
+        current_user = mongo.db.users.find_one({'_id': user_id})
+        if not current_user:
+             # This shouldn't happen if JWT is valid, but handle defensively
+             return jsonify({'error': 'Authenticated user not found in database'}), 404
+        # Use camp_id from the database record as the source of truth
+        user_camp_id = current_user.get('camp_id')
+
+
+        # --- Pagination ---
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 50)) # Increase default for conversation view
+        limit = int(request.args.get('limit', per_page))
+        skip = (page - 1) * limit
+
+        # --- Build Filters ---
+        filters: Dict[str, Any] = {'is_deleted': False}
+        message_type_filter = request.args.get('type')
+
+        # Define base conditions for what the user can generally access
+        accessible_conditions = [
+            # Personal messages TO the user
+            {'recipient_type': 'user', 'recipient_id': user_id},
+            # Personal messages FROM the user
+            {'recipient_type': 'user', 'sender_id': user_id},
+             # Ministry-wide messages
+            {'recipient_type': 'ministry'}
+        ]
+        if user_camp_id:
+             # Camp messages for the user's camp
+            accessible_conditions.append({'recipient_type': 'camp', 'recipient_id': user_camp_id})
+
+        # Apply type-specific filters OR default access filters
+        if message_type_filter == 'personal':
+            partner_id_str = request.args.get('partner_id')
+            if partner_id_str:
+                try:
+                    partner_id = ObjectId(partner_id_str)
+                    # Specific conversation
+                    filters['$or'] = [
+                        {'recipient_type': 'user', 'recipient_id': user_id, 'sender_id': partner_id},
+                        {'recipient_type': 'user', 'recipient_id': partner_id, 'sender_id': user_id}
+                    ]
+                except InvalidId:
+                    return jsonify({'error': 'Invalid partner ID format'}), 400
             else:
-                filters['created_at'] = {'$lte': to_date}
-        except ValueError:
-            pass
+                 # All personal messages
+                 filters['$or'] = [
+                    {'recipient_type': 'user', 'recipient_id': user_id},
+                    {'recipient_type': 'user', 'sender_id': user_id}
+                 ]
+        elif message_type_filter == 'camp':
+             if user_camp_id:
+                 filters['recipient_type'] = 'camp'
+                 filters['recipient_id'] = user_camp_id
+             else: # User not in a camp, cannot fetch camp messages specifically
+                  return jsonify({'messages': [], 'total': 0, 'page': page, 'per_page': limit, 'pages': 0}), 200
+        elif message_type_filter == 'ministry':
+            filters['recipient_type'] = 'ministry'
+        elif message_type_filter == 'sent':
+             filters['sender_id'] = user_id
+        else:
+             # Default: No type specified, fetch all accessible
+            filters['$or'] = accessible_conditions
 
-    # Pagination
-    page = int(request.args.get('page', 1))
-    per_page = int(request.args.get('per_page', 20))
-    skip = (page - 1) * per_page
+        # --- Additional Filters ---
+        if 'announcements_only' in request.args and request.args['announcements_only'].lower() == 'true':
+            filters['is_announcement'] = True
+        # ... (Add date filters as before if needed) ...
+        if 'from_date' in request.args:
+            try:
+                from_date = datetime.fromisoformat(request.args['from_date'])
+                filters.setdefault('created_at', {})['$gte'] = from_date
+            except ValueError: pass # Ignore invalid date
+        if 'to_date' in request.args:
+            try:
+                to_date = datetime.fromisoformat(request.args['to_date'])
+                filters.setdefault('created_at', {})['$lte'] = to_date
+            except ValueError: pass # Ignore invalid date
 
-    # Execute query
-    total = mongo.db.messages.count_documents(filters)
-    messages_cursor = mongo.db.messages.find(filters).sort(
-        'created_at', -1  # Sort by newest first
-    ).skip(skip).limit(per_page)
 
-    # Process results
-    messages = []
-    for msg in messages_cursor:
-        msg['_id'] = str(msg['_id'])
-        msg['sender_id'] = str(msg['sender_id'])
-        if 'recipient_id' in msg and msg['recipient_id']:
-            msg['recipient_id'] = str(msg['recipient_id'])
+        # --- Execute Query ---
+        print(f"DEBUG: Messages query filters: {filters}") # Log filters
+        total = mongo.db.messages.count_documents(filters)
+        messages_cursor = mongo.db.messages.find(filters).sort(
+            'created_at', -1
+        ).skip(skip).limit(limit)
 
-        # Add sender information
-        sender = mongo.db.users.find_one(
-            {'_id': ObjectId(msg['sender_id'])},
-            {'password_hash': 0, 'first_name': 1, 'last_name': 1, 'profile_image': 1}
-        )
-        if sender:
-            sender['_id'] = str(sender['_id'])
-            msg['sender'] = sender
+        # --- Process Results ---
+        messages_list = []
+        user_cache = {} # Simple cache for user details
 
-        # Add read status for current user
-        msg['is_read'] = ObjectId(user_id) in msg.get('read_by', [])
-        msg['read_by'] = [str(uid) for uid in msg.get('read_by', [])]
+        def get_user_details(uid_str):
+            if not uid_str: return None
+            if uid_str in user_cache: return user_cache[uid_str]
+            try:
+                details = mongo.db.users.find_one(
+                    {'_id': ObjectId(uid_str)},
+                    {'first_name': 1, 'last_name': 1, 'profile_image': 1}
+                )
+                user_cache[uid_str] = serialize_objectid(details) if details else None
+                return user_cache[uid_str]
+            except InvalidId:
+                return None
 
-        messages.append(msg)
+        for msg_doc in messages_cursor:
+            serialized_msg_data= serialize_objectid(msg_doc)
 
-    return jsonify({
-        'messages': messages,
-        'total': total,
-        'page': page,
-        'per_page': per_page,
-        'pages': (total + per_page - 1) // per_page
-    }), 200
+            if not isinstance(serialized_msg_data, dict):
+                # Should not happen if coming from MongoDB, but good practice
+                print(f"Warning: Skipping message doc that didn't serialize to dict: {msg_doc.get('_id')}")
+                continue
+            msg: Dict[str, Any] = cast(Dict[str, Any], serialized_msg_data)
+
+            msg['sender'] = get_user_details(msg.get('sender_id'))
+
+            if msg['recipient_type'] == 'user' and msg.get('recipient_id'):
+                msg['recipient'] = get_user_details(msg.get('recipient_id'))
+            elif msg['recipient_type'] == 'camp' and msg.get('recipient_id'):
+                camp_info = mongo.db.camps.find_one({'_id': ObjectId(msg['recipient_id'])}, {'name': 1})
+                if camp_info:
+                    msg['recipient'] = {'name': camp_info.get('name', 'Unknown Camp')}
+                    msg['camp_name'] = camp_info.get('name')
+
+            # Read status needs ObjectId comparison
+            msg['is_read'] = user_id in msg_doc.get('read_by', [])
+            msg['read_by'] = [str(uid) for uid in msg_doc.get('read_by', [])] # Keep string list for frontend
+
+            messages_list.append(msg)
+
+        return jsonify({
+            'messages': messages_list,
+            'total': total,
+            'page': page,
+            'per_page': limit,
+            'pages': (total + limit - 1) // limit
+        }), 200
+
+    except Exception as e:
+        print(f"ERROR in get_messages: {e}")
+        traceback.print_exc()
+        return jsonify({'error': 'An internal server error occurred'}), 500
 
 @messages_bp.route('/<message_id>', methods=['GET'])
 @jwt_required()

@@ -319,7 +319,7 @@ export default function ChatScreen() {
           </View>
           <Button
             onPress={handleSend}
-            disabled={sendMessageMutation.isPending || !newMessage.trim()}
+            // disabled={sendMessageMutation.isPending || !newMessage.trim()}
             size="icon"
             className={`w-11 h-11 ${!newMessage.trim() ? 'bg-muted' : 'bg-primary'}`} // Change bg when disabled
           >
