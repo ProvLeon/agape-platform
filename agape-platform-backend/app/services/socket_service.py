@@ -5,7 +5,7 @@ from app import mongo
 from bson import ObjectId
 import json
 from datetime import datetime, timezone
-from app.utils.helpers import serialize_objectid
+from app.utils.helpers import serialize_document
 from typing import Any, Optional
 
 # Initialize SocketIO
@@ -333,7 +333,7 @@ def configure_socket(app):
             return
 
         # Format the prayer request for broadcast
-        formatted_request = serialize_objectid(prayer_request)
+        formatted_request = serialize_document(prayer_request)
 
         # Skip private requests
         if prayer_request.get('is_private', False):
@@ -437,7 +437,7 @@ def configure_socket(app):
         )
 
         # Format meeting data
-        meeting_data = serialize_objectid(meeting)
+        meeting_data = serialize_document(meeting)
         if isinstance(meeting_data, dict):  # Make sure it's a dictionary
             meeting_data['status'] = 'in_progress'
             meeting_data['started_at'] = datetime.now(timezone.utc).isoformat()
