@@ -1,7 +1,6 @@
 import traceback
 from typing import Any, Dict, List, cast
 
-from flask_socketio import SocketIO
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from bson.objectid import ObjectId, InvalidId # Import InvalidId for error handling
@@ -11,7 +10,6 @@ import os
 from app import mongo
 from app.config import app_config
 from app.utils.helpers import serialize_document # Use the helper
-socketio = SocketIO()
 
 messages_bp = Blueprint('messages', __name__)
 
@@ -99,14 +97,14 @@ def create_message():
                 'recipient_id': data['recipient_id']
             }
 
-            socketio.emit('message_confirmed', confirmation_data, room=f"user_{user_id}")
-            if data['recipient_type'] == 'user':
-                socketio.emit('message_confirmed', confirmation_data, room=f"user_{data['recipient_id']}")
+            # socketio.emit('message_confirmed', confirmation_data, room=f"user_{user_id}")
+            # if data['recipient_type'] == 'user':
+            #     socketio.emit('message_confirmed', confirmation_data, room=f"user_{data['recipient_id']}")
 
             # Send to both the sender and recipient
-            # emit_to_room('message_confirmed', confirmation_data, room=f"user_{user_id}")
-            # if data['recipient_type'] == 'user':
-            #     emit_to_room('message_confirmed', confirmation_data, room=f"user_{data['recipient_id']}")
+            emit_to_room('message_confirmed', confirmation_data, room=f"user_{user_id}")
+            if data['recipient_type'] == 'user':
+                emit_to_room('message_confirmed', confirmation_data, room=f"user_{data['recipient_id']}")
 
             sender = mongo.db.users.find_one(
                 {'_id': ObjectId(user_id)},
@@ -133,9 +131,9 @@ def create_message():
 
             # Emit to recipient
             if data['recipient_type'] == 'user':
-                socketio.emit('new_message', message_response, room=f"user_{data['recipient_id']}")
+                emit_to_room('new_message', message_response, room=f"user_{data['recipient_id']}")
                 # Also emit to sender to ensure they see it too
-                socketio.emit('new_message', message_response, room=f"user_{user_id}")
+                emit_to_room('new_message', message_response, room=f"user_{user_id}")
 
         return jsonify(response_data), 201
     else:
