@@ -112,28 +112,57 @@ def create_message():
             )
 
             # Format message for socket delivery
-            message_response = {
-                'message_id': message_id,
-                'tempId': temp_id,
-                'content': data['content'],
-                'sender_id': user_id,
-                'recipient_type': data['recipient_type'],
-                'recipient_id': data['recipient_id'],
-                'created_at': new_message['created_at'].isoformat(),
-                'read_by': [],
-                'sender': {
-                    'id': user_id,
-                    'first_name': sender['first_name'],
-                    'last_name': sender['last_name'],
-                    'profile_image': sender.get('profile_image', None)
-                }
-            }
+            # message_response = {
+            #     'message_id': message_id,
+            #     'tempId': temp_id,
+            #     'content': data['content'],
+            #     'sender_id': user_id,
+            #     'recipient_type': data['recipient_type'],
+            #     'recipient_id': data['recipient_id'],
+            #     'created_at': new_message['created_at'].isoformat(),
+            #     'read_by': [],
+            #     'sender': {
+            #         'id': user_id,
+            #         'first_name': sender['first_name'],
+            #         'last_name': sender['last_name'],
+            #         'profile_image': sender.get('profile_image', None)
+            #     }
+            # }
 
             # Emit to recipient
             if data['recipient_type'] == 'user':
+                from app.services.socket_service import socketio
+
+                # Create a formatted message response
+                message_response = {
+                    'message_id': message_id,
+                    'tempId': temp_id,
+                    'content': data['content'],
+                    'sender_id': user_id,
+                    'recipient_type': data['recipient_type'],
+                    'recipient_id': data['recipient_id'],
+                    'created_at': new_message['created_at'].isoformat(),
+                    'read_by': [],
+                    'sender': {
+                        'id': user_id,
+                        'first_name': sender['first_name'],
+                        'last_name': sender['last_name'],
+                        'profile_image': sender.get('profile_image', None)
+                    }
+                }
+
+                # Create consistent chat room name
+                chat_participants = sorted([user_id, data['recipient_id']])
+                chat_room = f"chat_{chat_participants[0]}_{chat_participants[1]}"
+
+                # Emit to the chat room
+                print(f"REST API: Emitting new_message to chat room: {chat_room}")
+                emit_to_room('new_message', message_response, room=chat_room)
+
+                # Also emit to individual user sockets
                 emit_to_room('new_message', message_response, room=f"user_{data['recipient_id']}")
-                # Also emit to sender to ensure they see it too
                 emit_to_room('new_message', message_response, room=f"user_{user_id}")
+
 
         return jsonify(response_data), 201
     else:

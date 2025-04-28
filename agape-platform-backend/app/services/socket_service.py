@@ -289,6 +289,22 @@ def configure_socket(app):
         if temp_id:
             response['tempId'] = temp_id
 
+        if recipient_type == 'user':
+            chat_participants = sorted([sender_id, recipient_id])
+            chat_room = f"chat_{chat_participants[0]}_{chat_participants[1]}"
+
+            # Emit to the specific chat room
+            print(f"Emitting new_message to chat room: {chat_room}")
+            emit_to_room('new_message', response, room=chat_room)
+
+            # Also emit to individual user rooms for notifications when not in chat view
+            emit_to_room('new_message', response, room=f"user_{recipient_id}")
+            emit_to_room('new_message', response, room=f"user_{sender_id}")
+        elif recipient_type == 'ministry':
+            emit_to_room('new_message', response, room='ministry')
+        elif recipient_type == 'camp':
+            emit_to_room('new_message', response, room=f"camp_{recipient_id}")
+
         # Determine room to broadcast to
         if recipient_type == 'ministry':
             emit_to_room('new_message', response, room='ministry')
@@ -522,5 +538,47 @@ def configure_socket(app):
             'body': body,
             'timestamp': datetime.now(timezone.utc).isoformat()
         }, room=f"user_{user_id}")  # type: ignore
+
+    @socketio.on('join_chat')
+    def handle_join_chat(data):
+        """Join a user-to-user chat room"""
+        user_id = data.get('user_id')
+        partner_id = data.get('partner_id')
+
+        if not user_id or not partner_id:
+            emit('error', {'message': 'User ID and Partner ID required'})
+            return
+
+        # Create a consistent room name for this conversation
+        # Sort IDs to ensure same room regardless of who joins
+        chat_participants = sorted([user_id, partner_id])
+        chat_room = f"chat_{chat_participants[0]}_{chat_participants[1]}"
+
+        join_room(chat_room)
+        print(f"User {user_id} joined chat room with {partner_id}: {chat_room}")
+
+        # Emit confirmation
+        emit('chat_joined', {
+            'room': chat_room,
+            'user_id': user_id,
+            'partner_id': partner_id
+        })
+
+    @socketio.on('leave_chat')
+    def handle_leave_chat(data):
+        """Leave a user-to-user chat room"""
+        user_id = data.get('user_id')
+        partner_id = data.get('partner_id')
+
+        if not user_id or not partner_id:
+            emit('error', {'message': 'User ID and Partner ID required'})
+            return
+
+        # Create consistent room name
+        chat_participants = sorted([user_id, partner_id])
+        chat_room = f"chat_{chat_participants[0]}_{chat_participants[1]}"
+
+        leave_room(chat_room)
+        print(f"User {user_id} left chat room with {partner_id}: {chat_room}")
 
     return socketio
