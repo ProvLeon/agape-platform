@@ -230,6 +230,7 @@ def configure_socket(app):
         recipient_type = data.get('recipient_type')
         recipient_id = data.get('recipient_id')
         is_announcement = data.get('is_announcement', False)
+        temp_id = data.get('tempId')  # Add tempId handling
 
         # Validate data
         if not content or not sender_id or not recipient_type:
@@ -255,6 +256,7 @@ def configure_socket(app):
         }
 
         result = mongo.db.messages.insert_one(new_message)
+        message_id = str(result.inserted_id)
 
         # Get sender information for the response
         sender = mongo.db.users.find_one(
@@ -264,7 +266,7 @@ def configure_socket(app):
 
         # Format response message
         response = {
-            'message_id': str(result.inserted_id),
+            'message_id': message_id,
             'content': content,
             'sender_id': sender_id,
             'recipient_type': recipient_type,
@@ -283,41 +285,31 @@ def configure_socket(app):
             }
         }
 
+        # Include tempId if it was provided
+        if temp_id:
+            response['tempId'] = temp_id
+
         # Determine room to broadcast to
         if recipient_type == 'ministry':
             emit_to_room('new_message', response, room='ministry')
         elif recipient_type == 'camp':
             emit_to_room('new_message', response, room=f"camp_{recipient_id}")
         else:  # user-to-user message
+            # IMPORTANT: Always send to both sender and recipient rooms
             emit_to_room('new_message', response, room=f"user_{recipient_id}")
             emit_to_room('new_message', response, room=f"user_{sender_id}")
 
-    @socketio.on('message_read')
-    def handle_message_read(data):
-        """Mark message as read"""
-        message_id = data.get('message_id')
-        user_id = data.get('user_id')
-
-        if not message_id or not user_id:
-            emit('error', {'message': 'Message ID and User ID required'})
-            return
-
-        # Update message in database
-        result = mongo.db.messages.update_one(
-            {'_id': ObjectId(message_id)},
-            {'$addToSet': {'read_by': ObjectId(user_id)}}
-        )
-
-        # Get the message to determine who to notify
-        message = mongo.db.messages.find_one({'_id': ObjectId(message_id)})
-
-        if message:
-            # Notify sender that message was read
-            emit_to_room('message_read_status', {
+        # Send specific confirmation event with tempId mapping
+        if temp_id:
+            confirmation_data = {
+                'tempId': temp_id,
                 'message_id': message_id,
-                'user_id': user_id,
-                'read_at': datetime.now(timezone.utc).isoformat()
-            }, room=f"user_{str(message['sender_id'])}")
+                'sender_id': sender_id,
+                'recipient_id': recipient_id
+            }
+            emit_to_room('message_confirmed', confirmation_data, room=f"user_{sender_id}")
+            if recipient_type == 'user':
+                emit_to_room('message_confirmed', confirmation_data, room=f"user_{recipient_id}")
 
     @socketio.on('new_prayer_request')
     def handle_new_prayer_request(data):

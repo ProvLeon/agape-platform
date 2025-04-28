@@ -1,5 +1,7 @@
 import traceback
 from typing import Any, Dict, List, cast
+
+from flask_socketio import SocketIO
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from bson.objectid import ObjectId, InvalidId # Import InvalidId for error handling
@@ -9,7 +11,7 @@ import os
 from app import mongo
 from app.config import app_config
 from app.utils.helpers import serialize_document # Use the helper
-
+socketio = SocketIO()
 
 messages_bp = Blueprint('messages', __name__)
 
@@ -58,7 +60,8 @@ def create_message():
         if not recipient:
             return jsonify({'error': 'Recipient user not found'}), 404
 
-    # Prepare message document
+    temp_id = data.get('tempId')
+    # Create message document
     new_message = {
         'content': data['content'],
         'sender_id': ObjectId(user_id),
@@ -75,10 +78,66 @@ def create_message():
     result = mongo.db.messages.insert_one(new_message)
 
     if result.inserted_id:
-        return jsonify({
+        message_id = str(result.inserted_id)
+
+        # Include the temp_id in response if it was provided
+        response_data = {
             'message': 'Message sent successfully',
-            'message_id': str(result.inserted_id)
-        }), 201
+            'message_id': message_id
+        }
+
+        if temp_id:
+            response_data['tempId'] = temp_id
+
+            # Emit a message confirmation event
+            from app.services.socket_service import emit_to_room
+
+            confirmation_data = {
+                'tempId': temp_id,
+                'message_id': message_id,
+                'sender_id': user_id,
+                'recipient_id': data['recipient_id']
+            }
+
+            socketio.emit('message_confirmed', confirmation_data, room=f"user_{user_id}")
+            if data['recipient_type'] == 'user':
+                socketio.emit('message_confirmed', confirmation_data, room=f"user_{data['recipient_id']}")
+
+            # Send to both the sender and recipient
+            # emit_to_room('message_confirmed', confirmation_data, room=f"user_{user_id}")
+            # if data['recipient_type'] == 'user':
+            #     emit_to_room('message_confirmed', confirmation_data, room=f"user_{data['recipient_id']}")
+
+            sender = mongo.db.users.find_one(
+                {'_id': ObjectId(user_id)},
+                {'password_hash': 0, 'first_name': 1, 'last_name': 1, 'profile_image': 1}
+            )
+
+            # Format message for socket delivery
+            message_response = {
+                'message_id': message_id,
+                'tempId': temp_id,
+                'content': data['content'],
+                'sender_id': user_id,
+                'recipient_type': data['recipient_type'],
+                'recipient_id': data['recipient_id'],
+                'created_at': new_message['created_at'].isoformat(),
+                'read_by': [],
+                'sender': {
+                    'id': user_id,
+                    'first_name': sender['first_name'],
+                    'last_name': sender['last_name'],
+                    'profile_image': sender.get('profile_image', None)
+                }
+            }
+
+            # Emit to recipient
+            if data['recipient_type'] == 'user':
+                socketio.emit('new_message', message_response, room=f"user_{data['recipient_id']}")
+                # Also emit to sender to ensure they see it too
+                socketio.emit('new_message', message_response, room=f"user_{user_id}")
+
+        return jsonify(response_data), 201
     else:
         return jsonify({'error': 'Failed to send message'}), 500
 
